@@ -1,14 +1,10 @@
-"""Local MCP server exposing AutoML tools over stdio.
-
-Run directly:  python mcp_server.py
-The FastAPI backend spawns this as a subprocess via PythonStdioTransport.
-"""
-
+"""Local MCP server exposing AutoML tools over stdio."""
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 
 from core.logger import get_logger
 from tools.code_generator import generate_training_script
@@ -18,82 +14,122 @@ from tools.data_analysis import (
     get_dataset_info as _get_dataset_info,
     list_uploaded_files as _list_uploaded_files,
 )
-from tools.eda import generate_eda_report as _generate_eda_report
-from tools.ml_training import train_baseline_model as _train_baseline_model
+from tools.data_profiling import run_data_profiling_sync
+from tools.explainability import generate_model_explanations_sync
+from tools.model_bakeoff import run_model_bake_off_sync
 from tools.visualization import create_visualization as _create_visualization
 
 log = get_logger("mcp.server")
-
 mcp = FastMCP(name="automl-mcp-server")
 
 
 @mcp.tool
 def list_uploaded_files() -> dict[str, Any]:
-    """List all CSV/TSV files available in the upload directory.
-
-    Use this first when the user has not specified a file, or to verify which
-    datasets are available before calling any file-specific tool.
-
-    Returns the upload directory path, total file count, and a list of files
-    with `filename`, `size_kb`, and `modified_unix` for each entry.
-    """
-    log.info("tool=list_uploaded_files")
+    """List all CSV/TSV files available in the upload directory."""
     return _list_uploaded_files()
 
 
 @mcp.tool
 def analyze_csv_head(file_path: str, n_rows: int = 5) -> dict[str, Any]:
-    """Read a CSV and return the first N rows plus schema info.
-
-    Args:
-        file_path: Filename inside the upload directory (e.g. "iris.csv") or an
-            absolute path inside that directory.
-        n_rows: How many rows to preview. Defaults to 5.
-
-    Returns the file name, row/column counts, column list, per-column dtypes,
-    and the first `n_rows` rows as a list of dicts.
-    """
-    log.info("tool=analyze_csv_head file=%s n=%d", file_path, n_rows)
+    """Read a CSV and return the first N rows plus schema info."""
     return _analyze_csv_head(file_path=file_path, n_rows=n_rows)
 
 
 @mcp.tool
 def get_dataset_info(file_path: str) -> dict[str, Any]:
-    """Return a richer overview of a dataset: shape, dtypes, missing-value
-    counts, duplicate-row count, and column groupings (numeric vs categorical
-    vs datetime).
-
-    Call this when the user asks "tell me about my data" or before deciding
-    which visualization or model to recommend.
-    """
-    log.info("tool=get_dataset_info file=%s", file_path)
+    """Shape, dtypes, missing-value counts, duplicates, and column groupings."""
     return _get_dataset_info(file_path=file_path)
 
 
 @mcp.tool
 def detect_problem_type(file_path: str, target_column: str) -> dict[str, Any]:
-    """Inspect the target column and decide whether the task is
-    classification or regression.
-
-    Uses a simple heuristic: non-numeric → classification; numeric with few
-    unique values → classification; otherwise regression. Returns the
-    detected problem type plus diagnostics.
-    """
-    log.info("tool=detect_problem_type file=%s target=%s", file_path, target_column)
+    """Decide classification vs regression for the given target column."""
     return _detect_problem_type(file_path=file_path, target_column=target_column)
 
 
 @mcp.tool
-def generate_eda_report(file_path: str) -> dict[str, Any]:
-    """Generate a full EDA report for a CSV file: numeric summary statistics,
-    top correlated numeric feature pairs, categorical value counts, and
-    missing-value counts.
+async def run_data_profiling(file_path: str, ctx: Context) -> dict[str, Any]:
+    """Generate a full ydata-profiling HTML report and return summary statistics.
 
-    Also writes a markdown report to the outputs directory and returns its
-    filename under `report_file` for download.
+    Returns a high-level dict (row/col counts, missing counts, top correlations)
+    plus `report_url` that can be linked in chat.
     """
-    log.info("tool=generate_eda_report file=%s", file_path)
-    return _generate_eda_report(file_path=file_path)
+    await ctx.info(f"Starting ydata-profiling on {file_path}")
+    await ctx.report_progress(progress=5, total=100, message="Loading CSV…")
+    await asyncio.sleep(0)  # let event loop flush
+    await ctx.report_progress(progress=20, total=100, message="Building profile report")
+    result = await asyncio.to_thread(run_data_profiling_sync, file_path)
+    await ctx.report_progress(progress=95, total=100, message="Saving HTML report")
+    await ctx.info(f"Report saved: {result['report_file']}")
+    await ctx.report_progress(progress=100, total=100, message="Done")
+    return result
+
+
+@mcp.tool
+async def run_model_bake_off(
+    file_path: str,
+    target_column: str,
+    tune_budget_mins: int = 0,
+    ctx: Context = None,  # type: ignore[assignment]
+) -> dict[str, Any]:
+    """Train RF, XGBoost, LightGBM, and a linear baseline in parallel with CV.
+
+    Returns a sorted leaderboard (accuracy / F1 for classification, RMSE / R² for
+    regression) plus training times, the champion model artifact path, and an
+    Optuna tuning summary when `tune_budget_mins > 0`.
+    """
+    if ctx:
+        await ctx.info(f"Starting bake-off on {file_path}, target={target_column}")
+        await ctx.report_progress(5, 100, "Preparing data and CV splits")
+
+    # Wrap sync core; emit synthetic progress while training thread runs
+    loop = asyncio.get_running_loop()
+    task = loop.run_in_executor(
+        None, run_model_bake_off_sync, file_path, target_column, tune_budget_mins
+    )
+
+    if ctx:
+        await ctx.report_progress(15, 100, "Training RandomForest / XGBoost / LightGBM in parallel")
+        # Heartbeat progress while task runs
+        ticks = 0
+        while not task.done():
+            await asyncio.sleep(2.0)
+            ticks += 1
+            pct = min(15 + ticks * 5, 85)
+            await ctx.report_progress(pct, 100, f"Training in progress… ({ticks * 2}s)")
+
+    result = await task
+
+    if ctx:
+        await ctx.info(f"Champion: {result['champion_model']}")
+        if result.get("tuning"):
+            await ctx.info(
+                f"Optuna ran {result['tuning']['n_trials']} trials, "
+                f"best score {result['tuning']['best_value']:.4f}"
+            )
+        await ctx.report_progress(100, 100, "Bake-off complete")
+    return result
+
+
+@mcp.tool
+async def generate_model_explanations(
+    model_artifact_path: str,
+    x_train_sample_path: str,
+    ctx: Context,
+    max_samples: int = 200,
+) -> dict[str, Any]:
+    """Generate SHAP summary plot for the champion model. Returns a static URL
+    that the LLM can render in chat as Markdown."""
+    await ctx.info("Computing SHAP values…")
+    await ctx.report_progress(10, 100, "Loading champion model")
+    result = await asyncio.to_thread(
+        generate_model_explanations_sync,
+        model_artifact_path,
+        x_train_sample_path,
+        max_samples,
+    )
+    await ctx.report_progress(100, 100, "Plot saved")
+    return result
 
 
 @mcp.tool
@@ -103,24 +139,8 @@ def create_visualization(
     columns: list[str] | None = None,
     target_column: str | None = None,
 ) -> dict[str, Any]:
-    """Create a visualization saved as a PNG inside the outputs directory.
-
-    Args:
-        file_path: Dataset filename in the upload directory.
-        chart_type: One of "histogram", "bar", "scatter", "box",
-            "correlation_heatmap", "missing_matrix", "target_distribution".
-        columns: Optional list of column names. Required for scatter (2
-            numeric columns); optional for histogram/bar/box.
-        target_column: Used by "scatter" (as hue) and required for
-            "target_distribution".
-
-    Returns the chart type, the columns used, and the saved PNG filename
-    under `file` for download.
-    """
-    log.info(
-        "tool=create_visualization file=%s chart=%s cols=%s target=%s",
-        file_path, chart_type, columns, target_column,
-    )
+    """Create a chart (histogram, bar, scatter, box, correlation_heatmap,
+    missing_matrix, target_distribution) and save it as PNG."""
     return _create_visualization(
         file_path=file_path,
         chart_type=chart_type,
@@ -130,46 +150,8 @@ def create_visualization(
 
 
 @mcp.tool
-def train_baseline_model(
-    file_path: str,
-    target_column: str,
-    test_size: float = 0.2,
-    random_state: int = 42,
-) -> dict[str, Any]:
-    """Train a baseline Random Forest model on the dataset.
-
-    Auto-detects classification vs regression from the target column, runs a
-    standard preprocessing pipeline (median/mode imputation, scaling for
-    numerics, one-hot for categoricals), trains a 200-tree Random Forest,
-    and reports metrics on a held-out test split.
-
-    For classification returns accuracy and F1 (binary or weighted). For
-    regression returns RMSE, MAE, and R^2. Also returns the top-10 feature
-    importances and saves the fitted pipeline to the outputs directory.
-    """
-    log.info(
-        "tool=train_baseline_model file=%s target=%s test_size=%s",
-        file_path, target_column, test_size,
-    )
-    return _train_baseline_model(
-        file_path=file_path,
-        target_column=target_column,
-        test_size=test_size,
-        random_state=random_state,
-    )
-
-
-@mcp.tool
 def download_main_code_file(file_path: str, target_column: str) -> dict[str, Any]:
-    """Generate a standalone, runnable Python training script for the given
-    dataset and target column.
-
-    The script reproduces the baseline pipeline (preprocessing + Random
-    Forest), is fully self-contained, and is saved to the outputs directory.
-    The returned `script_file` can be downloaded and executed locally with
-    `python <script_file>`.
-    """
-    log.info("tool=download_main_code_file file=%s target=%s", file_path, target_column)
+    """Generate a standalone runnable Python training script."""
     return generate_training_script(file_path=file_path, target_column=target_column)
 
 

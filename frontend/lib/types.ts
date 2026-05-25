@@ -13,12 +13,6 @@ export interface ToolCallRecord {
   duration_ms: number;
 }
 
-export interface ChatResponse {
-  answer: string;
-  tool_calls: ToolCallRecord[];
-  iterations: number;
-}
-
 export interface UploadResponse {
   filename: string;
   size_bytes: number;
@@ -38,12 +32,60 @@ export interface DatasetListResponse {
   files: DatasetItem[];
 }
 
+// ---- SSE event union ----
+export type StreamEvent =
+  | { type: "meta"; conversation_id: string; title: string }
+  | { type: "token"; content: string }
+  | { type: "tool_start"; name: string; arguments: Record<string, unknown> }
+  | { type: "tool_progress"; message: string; percentage: number }
+  | {
+      type: "tool_end";
+      name: string;
+      result: string;
+      error: string | null;
+      duration_ms: number;
+    }
+  | { type: "done"; answer: string; tool_calls: ToolCallRecord[] }
+  | { type: "error"; message: string };
+
+export interface ActiveToolBadge {
+  name: string;
+  message: string;
+  percentage: number;
+  started_at: number;
+}
+
 export interface UiMessage {
   id: string;
   role: ChatRole;
   content: string;
   toolCalls?: ToolCallRecord[];
-  iterations?: number;
+  activeTool?: ActiveToolBadge | null;
   pending?: boolean;
   errored?: boolean;
+}
+
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  active_file: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationList {
+  conversations: ConversationSummary[];
+}
+
+export interface ConversationDetail {
+  id: string;
+  title: string;
+  active_file: string | null;
+  messages: {
+    id: string;
+    role: string;
+    content: string;
+    tool_calls: ToolCallRecord[] | null;
+    created_at: string;
+  }[];
 }

@@ -13,6 +13,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1)
     active_file: str | None = None
+    conversation_id: str | None = None
     history: list[ChatMessage] = Field(default_factory=list)
 
 
@@ -22,12 +23,6 @@ class ToolCallRecord(BaseModel):
     result: Any
     error: str | None = None
     duration_ms: int
-
-
-class ChatResponse(BaseModel):
-    answer: str
-    tool_calls: list[ToolCallRecord]
-    iterations: int
 
 
 class UploadResponse(BaseModel):

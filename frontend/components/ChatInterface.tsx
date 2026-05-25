@@ -2,24 +2,43 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { sendChat } from "@/lib/api";
-import type { ChatMessage, UiMessage, UploadResponse } from "@/lib/types";
+import { getConversation } from "@/lib/api";
+import type {
+  ChatMessage,
+  UiMessage,
+  UploadResponse,
+} from "@/lib/types";
 
 import ChatComposer from "./ChatComposer";
+import ConversationSidebar from "./ConversationSidebar";
 import DatasetSidebar from "./DatasetSidebar";
 import EmptyState from "./EmptyState";
 import MessageBubble from "./MessageBubble";
+import { useStreamingChat } from "@/hooks/useStreamingChat";
 
 function uid(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 export default function ChatInterface() {
-  const [messages, setMessages] = useState<UiMessage[]>([]);
+  const {
+    messages,
+    setMessages,
+    busy,
+    activeTool,
+    conversationId,
+    conversationTitle,
+    setConversationId,
+    setConversationTitle,
+    reset,
+    send,
+    abort,
+  } = useStreamingChat();
+
   const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
   const [activeFile, setActiveFile] = useState<string | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [datasetRefreshKey, setDatasetRefreshKey] = useState(0);
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
 
   const threadRef = useRef<HTMLDivElement | null>(null);
 
@@ -27,99 +46,114 @@ export default function ChatInterface() {
     if (threadRef.current) {
       threadRef.current.scrollTop = threadRef.current.scrollHeight;
     }
-  }, [messages, busy]);
+  }, [messages, busy, activeTool]);
 
-  const handleUploaded = useCallback((resp: UploadResponse) => {
-    setActiveFile(resp.filename);
-    setRefreshKey((k) => k + 1);
-    const sysNote: UiMessage = {
-      id: uid(),
-      role: "assistant",
-      content: `Uploaded **${resp.filename}** (${resp.rows.toLocaleString()} rows × ${resp.columns} columns). Selected as active dataset.\n\nColumns: ${resp.column_names.slice(0, 12).map((c) => `\`${c}\``).join(", ")}${resp.column_names.length > 12 ? "…" : ""}`,
-    };
-    setMessages((prev) => [...prev, sysNote]);
-  }, []);
+  const handleUploaded = useCallback(
+    (resp: UploadResponse) => {
+      setActiveFile(resp.filename);
+      setDatasetRefreshKey((k) => k + 1);
+      const note: UiMessage = {
+        id: uid(),
+        role: "assistant",
+        content: `Uploaded **${resp.filename}** (${resp.rows.toLocaleString()} rows × ${resp.columns} columns). Selected as active dataset.\n\nColumns: ${resp.column_names
+          .slice(0, 12)
+          .map((c) => `\`${c}\``)
+          .join(", ")}${resp.column_names.length > 12 ? "…" : ""}`,
+      };
+      setMessages((prev) => [...prev, note]);
+    },
+    [setMessages],
+  );
+
+  const handleSelectConversation = useCallback(
+    async (id: string) => {
+      if (id === conversationId) return;
+      try {
+        const detail = await getConversation(id);
+        setConversationId(detail.id);
+        setConversationTitle(detail.title);
+        setActiveFile(detail.active_file);
+        setMessages(
+          detail.messages.map((m) => ({
+            id: m.id,
+            role: m.role === "user" ? "user" : "assistant",
+            content: m.content,
+            toolCalls: m.tool_calls || undefined,
+          })),
+        );
+      } catch (err) {
+        alert(err instanceof Error ? err.message : "Failed to load conversation.");
+      }
+    },
+    [conversationId, setConversationId, setConversationTitle, setMessages],
+  );
+
+  const handleNewConversation = useCallback(() => {
+    reset();
+    setInput("");
+  }, [reset]);
 
   const submit = useCallback(
     async (overrideText?: string) => {
       const text = (overrideText ?? input).trim();
       if (!text || busy) return;
-
-      const userMsg: UiMessage = { id: uid(), role: "user", content: text };
-      const pendingMsg: UiMessage = {
-        id: uid(),
-        role: "assistant",
-        content: "",
-        pending: true,
-      };
-
-      setMessages((prev) => [...prev, userMsg, pendingMsg]);
       setInput("");
-      setBusy(true);
 
       const history: ChatMessage[] = messages
-        .filter((m) => !m.pending && !m.errored)
+        .filter((m) => !m.pending && !m.errored && m.content)
         .map((m) => ({ role: m.role, content: m.content }));
 
-      try {
-        const resp = await sendChat({
-          query: text,
-          active_file: activeFile,
-          history,
-        });
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === pendingMsg.id
-              ? {
-                  ...m,
-                  pending: false,
-                  content: resp.answer,
-                  toolCalls: resp.tool_calls,
-                  iterations: resp.iterations,
-                }
-              : m,
-          ),
-        );
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : "Unknown error.";
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === pendingMsg.id
-              ? {
-                  ...m,
-                  pending: false,
-                  content: `**Error:** ${detail}`,
-                  errored: true,
-                }
-              : m,
-          ),
-        );
-      } finally {
-        setBusy(false);
-      }
+      await send({
+        query: text,
+        activeFile,
+        conversationId,
+        history,
+      });
+      setHistoryRefreshKey((k) => k + 1);
     },
-    [activeFile, busy, input, messages],
+    [activeFile, busy, conversationId, input, messages, send],
   );
 
   return (
     <div className="flex h-screen">
+      <div className="hidden w-64 shrink-0 lg:block">
+        <ConversationSidebar
+          activeConversationId={conversationId}
+          onSelect={(id) => void handleSelectConversation(id)}
+          onNew={handleNewConversation}
+          refreshKey={historyRefreshKey}
+        />
+      </div>
+
       <div className="hidden w-72 shrink-0 md:block">
         <DatasetSidebar
           activeFile={activeFile}
           onSelect={setActiveFile}
           onUploaded={handleUploaded}
-          refreshKey={refreshKey}
+          refreshKey={datasetRefreshKey}
         />
       </div>
 
       <div className="flex h-full flex-1 flex-col">
         <header className="flex items-center justify-between border-b border-ink-200 bg-white px-4 py-3 md:px-6">
-          <div className="text-sm font-semibold text-ink-800">Conversation</div>
-          {activeFile && (
-            <div className="text-xs text-ink-500">
-              Active: <span className="font-mono text-ink-700">{activeFile}</span>
-            </div>
-          )}
+          <div className="min-w-0 truncate text-sm font-semibold text-ink-800">
+            {conversationTitle || "New conversation"}
+          </div>
+          <div className="flex items-center gap-3 text-xs text-ink-500">
+            {activeFile && (
+              <span>
+                Active: <span className="font-mono text-ink-700">{activeFile}</span>
+              </span>
+            )}
+            {busy && (
+              <button
+                onClick={abort}
+                className="rounded-md border border-ink-200 px-2 py-1 text-ink-700 hover:bg-ink-100"
+              >
+                Stop
+              </button>
+            )}
+          </div>
         </header>
 
         <div ref={threadRef} className="flex-1 overflow-y-auto">

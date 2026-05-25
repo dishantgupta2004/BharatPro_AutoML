@@ -4,12 +4,20 @@ import { Bot, Loader2, User } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { API_BASE_URL } from "@/lib/api";
 import type { UiMessage } from "@/lib/types";
 
 import ToolCallCard from "./ToolCallCard";
+import ToolProgressBanner from "./ToolProgressBanner";
 
 interface Props {
   message: UiMessage;
+}
+
+// Rewrite relative /static/... URLs so images and links work cross-origin
+function rewriteUrl(url: string): string {
+  if (url.startsWith("/static/")) return `${API_BASE_URL}${url}`;
+  return url;
 }
 
 export default function MessageBubble({ message }: Props) {
@@ -34,20 +42,32 @@ export default function MessageBubble({ message }: Props) {
             : "rounded-tl-sm bg-white text-ink-900 ring-1 ring-ink-200",
         ].join(" ")}
       >
-        {message.pending ? (
+        {message.pending && !message.content && !message.activeTool && (
           <div className="flex items-center gap-2 text-ink-500">
             <Loader2 className="h-4 w-4 animate-spin" />
             <span>Thinking…</span>
           </div>
-        ) : isUser ? (
-          <div className="whitespace-pre-wrap">{message.content}</div>
-        ) : (
-          <div className="prose-tight">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {message.content || "_(no answer text)_"}
-            </ReactMarkdown>
+        )}
+
+        {!isUser && message.activeTool && (
+          <div className="mb-2">
+            <ToolProgressBanner badge={message.activeTool} />
           </div>
         )}
+
+        {message.content &&
+          (isUser ? (
+            <div className="whitespace-pre-wrap">{message.content}</div>
+          ) : (
+            <div className="prose-tight">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                urlTransform={rewriteUrl}
+              >
+                {message.content}
+              </ReactMarkdown>
+            </div>
+          ))}
 
         {!isUser && message.toolCalls && message.toolCalls.length > 0 && (
           <div className="mt-3 space-y-2">
