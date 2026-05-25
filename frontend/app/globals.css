@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-ink-50 text-ink-900 antialiased;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-ink-200 rounded-full;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-ink-300;
+}
+
+.prose-tight p {
+  margin-block: 0.4rem;
+}
+.prose-tight ul {
+  margin-block: 0.4rem;
+  padding-left: 1.25rem;
+  list-style: disc;
+}
+.prose-tight ol {
+  margin-block: 0.4rem;
+  padding-left: 1.25rem;
+  list-style: decimal;
+}
+.prose-tight code {
+  @apply rounded bg-ink-100 px-1 py-0.5 text-[0.85em] font-mono text-ink-800;
+}
+.prose-tight pre {
+  @apply my-2 overflow-x-auto rounded-lg bg-ink-900 p-3 text-ink-50;
+}
+.prose-tight pre code {
+  @apply bg-transparent p-0 text-ink-50;
+}
+.prose-tight table {
+  @apply my-2 w-full border-collapse text-left text-sm;
+}
+.prose-tight th,
+.prose-tight td {
+  @apply border border-ink-200 px-2 py-1;
+}
+.prose-tight th {
+  @apply bg-ink-100 font-semibold;
+}
