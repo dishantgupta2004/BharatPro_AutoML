@@ -1,11 +1,12 @@
-"""SSE-streaming Groq <-> MCP orchestration loop.
+"""SSE-streaming Groq <-> multi-MCP orchestration loop.
 
-Emits four event types as `data: {...}\\n\\n` SSE frames:
-  - {"type": "token", "content": str}
-  - {"type": "tool_start", "name": str, "arguments": dict}
-  - {"type": "tool_progress", "message": str, "percentage": float}
-  - {"type": "tool_end", "name": str, "result": str}
-Plus housekeeping events: "meta" (conversation_id/title), "done", "error".
+This is the heart of the distributed Unisole Empower platform: it presents a
+single, flat tool catalog to the Groq LLM (assembled from 5 upstream MCP
+microservices) and transparently routes each tool call to its owning service
+via the shared `MCPClientPool`.
+
+Emits the same SSE protocol the frontend already speaks, plus a new
+`service_status` event when any microservice changes state.
 """
 from __future__ import annotations
 
@@ -14,55 +15,52 @@ import json
 import time
 from typing import Any, AsyncGenerator
 
-from fastmcp import Client
-from fastmcp.client.transports import PythonStdioTransport
 from groq import Groq
 
 from core.config import settings
 from core.logger import get_logger
+from core.mcp_pool import MCPClientPool
 
 log = get_logger("orchestrator")
 
-SYSTEM_PROMPT = """You are AutoML Copilot, an AI assistant for students and \
-researchers exploring data and training machine-learning models.
+SYSTEM_PROMPT = """You are **Unisole Empower Copilot**, an AI assistant for students, \
+researchers, and data engineers exploring datasets and training ML models.
 
-You have a local MCP server with these tools:
-  - list_uploaded_files
-  - analyze_csv_head
-  - get_dataset_info
-  - detect_problem_type
-  - run_data_profiling           (ydata-profiling, returns HTML report URL)
-  - create_visualization
-  - run_model_bake_off           (parallel RF / XGBoost / LightGBM / linear baseline; optional Optuna tuning)
-  - generate_model_explanations  (SHAP summary; returns a /static/plots/*.png URL)
-  - download_main_code_file
+You are connected to a distributed network of FIVE specialized MCP microservices:
+
+  • mcp-data      (Port 8001) — Ingestion, schema, pandera validation
+  • mcp-eda       (Port 8002) — Profiling reports, correlation matrices, charts
+  • mcp-modeling  (Port 8003) — Parallel AutoML bake-off, Optuna hyperparameter sweeps
+  • mcp-explain   (Port 8004) — SHAP values, feature importance, explainability cards
+  • mcp-export    (Port 8005) — Jupyter notebooks, PDF reports
+
+All tools from all 5 services are available to you in a unified catalog. Use them \
+naturally; the platform routes each call to the correct service.
+
+Resources (read-only context):
+  • dataset://{name}/schema           — pandera schema breakdown of a dataset
+  • model://{model_id}/explainability-card — global feature importance + model card
+
+Prompts (multi-step templates the user can invoke with a slash command):
+  • /eda-deep-dive — A systematic 5-stage exploratory data analysis protocol.
 
 Rules:
-1. If a user message says "my data", "the dataset", "this file", use the active_file from \
-context as file_path. If no active file is provided and the user did not name one, call \
-list_uploaded_files first.
-2. Always ground factual claims about the data in a tool call. Never invent columns, rows, or metrics.
-3. When training a model, if the target column is not specified, ASK the user. Do not guess.
-4. After run_model_bake_off succeeds, you may proactively call generate_model_explanations \
-using the returned model_artifact_path and x_train_sample_path.
-5. When a tool returns `report_url`, `plot_url`, or `markdown_embed`, render it inline in your \
-reply as Markdown (e.g. `![SHAP](/static/plots/...)` or `[Full profile report](/static/reports/...)`).
-6. Be concise. Short paragraphs, light bullet use. Audience: students.
+1. If the user says "my data" / "the dataset" / "this file", use the active_file in \
+context as the file_path. If none is set, call `list_uploaded_files` first.
+2. Always ground factual claims in tool results. Never invent columns, rows, or metrics.
+3. When training a model, if the target column is unclear, ASK the user.
+4. After `run_parallel_bake_off` succeeds, you may proactively call \
+`calculate_shap_values` using the returned `model_id` and `x_train_sample_path`.
+5. When a tool returns `report_url`, `plot_url`, `markdown_embed`, or `download_url`, \
+render it inline as Markdown (`![…](URL)` or `[link](URL)`).
+6. Be concise — short paragraphs, light bullets. Audience: students and analysts.
+7. If a microservice is offline, gracefully tell the user which capability is \
+unavailable and continue with what you can.
 """
 
 
-def _mcp_tool_to_openai_schema(tool: Any) -> dict[str, Any]:
-    schema = getattr(tool, "inputSchema", None) or {}
-    if not isinstance(schema, dict) or "type" not in schema:
-        schema = {"type": "object", "properties": {}}
-    return {
-        "type": "function",
-        "function": {
-            "name": tool.name,
-            "description": (tool.description or "").strip(),
-            "parameters": schema,
-        },
-    }
+def _sse(event: dict[str, Any]) -> str:
+    return f"data: {json.dumps(event, default=str)}\n\n"
 
 
 def _extract_tool_result(result: Any) -> Any:
@@ -71,7 +69,7 @@ def _extract_tool_result(result: Any) -> Any:
     if hasattr(result, "data") and result.data is not None:
         return result.data
     if hasattr(result, "content") and result.content:
-        chunks = []
+        chunks: list[str] = []
         for block in result.content:
             text = getattr(block, "text", None)
             if text:
@@ -84,11 +82,12 @@ def _extract_tool_result(result: Any) -> Any:
     return str(result)
 
 
-def _sse(event: dict[str, Any]) -> str:
-    return f"data: {json.dumps(event, default=str)}\n\n"
-
-
-def _build_messages(query: str, history: list[dict[str, str]], active_file: str | None) -> list[dict[str, Any]]:
+def _build_messages(
+    query: str,
+    history: list[dict[str, str]],
+    active_file: str | None,
+    pool_snapshot: dict[str, Any],
+) -> list[dict[str, Any]]:
     sys_lines = [SYSTEM_PROMPT]
     if active_file:
         sys_lines.append(
@@ -100,6 +99,16 @@ def _build_messages(query: str, history: list[dict[str, str]], active_file: str 
             "\nNo active dataset selected. If a tool needs file_path, ask or call "
             "list_uploaded_files first."
         )
+    online = [
+        s["name"] for s in pool_snapshot["services"] if s["status"] == "online"
+    ]
+    offline = [
+        s["name"] for s in pool_snapshot["services"] if s["status"] != "online"
+    ]
+    sys_lines.append(f"\nMicroservices online: {', '.join(online) or 'none'}.")
+    if offline:
+        sys_lines.append(f"Microservices offline / degraded: {', '.join(offline)}.")
+
     msgs: list[dict[str, Any]] = [{"role": "system", "content": "\n".join(sys_lines)}]
     for m in history:
         msgs.append({"role": m["role"], "content": m["content"]})
@@ -111,18 +120,27 @@ async def stream_chat(
     query: str,
     active_file: str | None,
     history: list[dict[str, str]],
-    mcp_server_script: str,
+    pool: MCPClientPool,
+    prompt_inject: str | None = None,
 ) -> AsyncGenerator[str, None]:
-    """Async generator yielding SSE-formatted event strings."""
+    """Run the Groq <-> multi-MCP loop, yielding SSE-formatted event strings."""
     if not settings.GROQ_API_KEY:
         yield _sse({"type": "error", "message": "GROQ_API_KEY is not set."})
         return
 
     groq_client = Groq(api_key=settings.GROQ_API_KEY)
-    transport = PythonStdioTransport(script_path=mcp_server_script)
-    messages = _build_messages(query, history, active_file)
+    pool_snapshot = pool.snapshot()
+    messages = _build_messages(query, history, active_file, pool_snapshot)
 
-    # Queue bridging MCP progress + log notifications into the SSE stream
+    # When the user fired a /eda-deep-dive (or any) prompt template, the
+    # orchestrator can inject the rendered prompt text as a system msg.
+    if prompt_inject:
+        messages.insert(1, {"role": "system", "content": prompt_inject})
+
+    openai_tools = pool.tool_schemas
+    log.info("Streaming with %d unified tools", len(openai_tools))
+
+    # Progress bridge from MCP -> SSE
     progress_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
     async def progress_handler(
@@ -137,190 +155,180 @@ async def stream_chat(
             }
         )
 
-    async def log_handler(msg: Any) -> None:
-        # fastmcp passes a LogMessage with .data / .level
-        data = getattr(msg, "data", None) or getattr(msg, "message", None) or str(msg)
-        await progress_queue.put(
-            {"type": "tool_progress", "message": str(data), "percentage": -1}
-        )
-
     full_answer: list[str] = []
     tool_calls_collected: list[dict[str, Any]] = []
 
     try:
-        async with Client(
-            transport,
-            progress_handler=progress_handler,
-            log_handler=log_handler,
-        ) as mcp_client:
-            tool_list = await mcp_client.list_tools()
-            openai_tools = [_mcp_tool_to_openai_schema(t) for t in tool_list]
-            log.info("Discovered %d MCP tools", len(openai_tools))
+        for step in range(settings.MAX_TOOL_ITERATIONS):
+            stream = await asyncio.to_thread(
+                groq_client.chat.completions.create,
+                model=settings.GROQ_MODEL,
+                messages=messages,
+                tools=openai_tools if openai_tools else None,
+                tool_choice="auto" if openai_tools else None,
+                temperature=0.2,
+                max_tokens=2048,
+                stream=True,
+            )
 
-            for step in range(settings.MAX_TOOL_ITERATIONS):
-                # ---- Groq streaming call ----
-                stream = await asyncio.to_thread(
-                    groq_client.chat.completions.create,
-                    model=settings.GROQ_MODEL,
-                    messages=messages,
-                    tools=openai_tools,
-                    tool_choice="auto",
-                    temperature=0.2,
-                    max_tokens=2048,
-                    stream=True,
+            assistant_text: list[str] = []
+            pending_tool_calls: dict[int, dict[str, Any]] = {}
+            started_tool_indices: set[int] = set()
+            sentinel = object()
+
+            while True:
+                chunk = await asyncio.to_thread(next, stream, sentinel)
+                if chunk is sentinel:
+                    break
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+
+                if getattr(delta, "content", None):
+                    assistant_text.append(delta.content)
+                    yield _sse({"type": "token", "content": delta.content})
+
+                if getattr(delta, "tool_calls", None):
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        slot = pending_tool_calls.setdefault(
+                            idx, {"id": None, "name": "", "arguments": ""}
+                        )
+                        if tc_delta.id:
+                            slot["id"] = tc_delta.id
+                        fn = getattr(tc_delta, "function", None)
+                        if fn:
+                            if getattr(fn, "name", None):
+                                slot["name"] = fn.name
+                            if getattr(fn, "arguments", None):
+                                slot["arguments"] += fn.arguments
+                        if idx not in started_tool_indices and slot["name"]:
+                            started_tool_indices.add(idx)
+                            try:
+                                partial_args = json.loads(slot["arguments"] or "{}")
+                            except json.JSONDecodeError:
+                                partial_args = {}
+                            owner = pool.service_for_tool(slot["name"]) or "unknown"
+                            yield _sse(
+                                {
+                                    "type": "tool_start",
+                                    "name": slot["name"],
+                                    "service": owner,
+                                    "arguments": partial_args,
+                                }
+                            )
+
+            joined_text = "".join(assistant_text)
+            if joined_text:
+                full_answer.append(joined_text)
+
+            if not pending_tool_calls:
+                messages.append({"role": "assistant", "content": joined_text})
+                break
+
+            ordered = [pending_tool_calls[i] for i in sorted(pending_tool_calls.keys())]
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": joined_text,
+                    "tool_calls": [
+                        {
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {
+                                "name": tc["name"],
+                                "arguments": tc["arguments"] or "{}",
+                            },
+                        }
+                        for tc in ordered
+                    ],
+                }
+            )
+
+            # Execute each tool, draining progress events in between
+            for tc in ordered:
+                name = tc["name"]
+                try:
+                    args = json.loads(tc["arguments"] or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                owner = pool.service_for_tool(name) or "unknown"
+                t0 = time.time()
+
+                call_task = asyncio.create_task(
+                    pool.call_tool(name, args, progress_handler=progress_handler)
                 )
 
-                assistant_text: list[str] = []
-                # tool_calls accumulator: index -> {id, name, arguments}
-                pending_tool_calls: dict[int, dict[str, Any]] = {}
-                started_tool_indices: set[int] = set()
-
-                sentinel = object()
-
                 while True:
-                    chunk = await asyncio.to_thread(next, stream, sentinel)
-                    if chunk is sentinel:
-                        break
-                    if not chunk.choices:
-                        continue
-                    delta = chunk.choices[0].delta
+                    try:
+                        evt = await asyncio.wait_for(progress_queue.get(), timeout=0.05)
+                        yield _sse(evt)
+                    except asyncio.TimeoutError:
+                        if call_task.done():
+                            break
 
-                    if getattr(delta, "content", None):
-                        assistant_text.append(delta.content)
-                        yield _sse({"type": "token", "content": delta.content})
+                while not progress_queue.empty():
+                    yield _sse(progress_queue.get_nowait())
 
-                    if getattr(delta, "tool_calls", None):
-                        for tc_delta in delta.tool_calls:
-                            idx = tc_delta.index
-                            slot = pending_tool_calls.setdefault(
-                                idx, {"id": None, "name": "", "arguments": ""}
-                            )
-                            if tc_delta.id:
-                                slot["id"] = tc_delta.id
-                            fn = getattr(tc_delta, "function", None)
-                            if fn:
-                                if getattr(fn, "name", None):
-                                    slot["name"] = fn.name
-                                if getattr(fn, "arguments", None):
-                                    slot["arguments"] += fn.arguments
+                error: str | None = None
+                try:
+                    mcp_result = await call_task
+                    payload = _extract_tool_result(mcp_result)
+                except Exception as exc:
+                    error = f"{type(exc).__name__}: {exc}"
+                    payload = {"error": error, "service": owner}
+                    # Resilience: notify the UI that the service that owned this
+                    # tool may be down, but keep iterating with the others.
+                    yield _sse(
+                        {
+                            "type": "service_status",
+                            "service": {
+                                "name": owner,
+                                "status": "error",
+                                "last_error": error,
+                            },
+                        }
+                    )
 
-                            # Emit tool_start on first sighting of this index with a name
-                            if idx not in started_tool_indices and slot["name"]:
-                                started_tool_indices.add(idx)
-                                # Best-effort parse of partial arguments
-                                try:
-                                    partial_args = json.loads(slot["arguments"] or "{}")
-                                except json.JSONDecodeError:
-                                    partial_args = {}
-                                yield _sse(
-                                    {
-                                        "type": "tool_start",
-                                        "name": slot["name"],
-                                        "arguments": partial_args,
-                                    }
-                                )
+                duration_ms = int((time.time() - t0) * 1000)
+                result_str = json.dumps(payload, default=str)
 
-                # ---- After Groq stream completes for this iteration ----
-                joined_text = "".join(assistant_text)
-                if joined_text:
-                    full_answer.append(joined_text)
-
-                if not pending_tool_calls:
-                    # Final assistant message reached, exit loop
-                    messages.append({"role": "assistant", "content": joined_text})
-                    break
-
-                # Build the assistant message (with tool_calls) for the next round
-                ordered = [pending_tool_calls[i] for i in sorted(pending_tool_calls.keys())]
-                messages.append(
+                yield _sse(
                     {
-                        "role": "assistant",
-                        "content": joined_text,
-                        "tool_calls": [
-                            {
-                                "id": tc["id"],
-                                "type": "function",
-                                "function": {
-                                    "name": tc["name"],
-                                    "arguments": tc["arguments"] or "{}",
-                                },
-                            }
-                            for tc in ordered
-                        ],
+                        "type": "tool_end",
+                        "name": name,
+                        "service": owner,
+                        "result": result_str,
+                        "error": error,
+                        "duration_ms": duration_ms,
                     }
                 )
 
-                # ---- Execute each tool, draining progress queue concurrently ----
-                for tc in ordered:
-                    name = tc["name"]
-                    try:
-                        args = json.loads(tc["arguments"] or "{}")
-                    except json.JSONDecodeError:
-                        args = {}
-
-                    t0 = time.time()
-                    call_task = asyncio.create_task(mcp_client.call_tool(name, args))
-
-                    # Drain progress while the tool runs
-                    while True:
-                        try:
-                            evt = await asyncio.wait_for(progress_queue.get(), timeout=0.05)
-                            yield _sse(evt)
-                        except asyncio.TimeoutError:
-                            if call_task.done():
-                                break
-
-                    # Drain remaining queued progress
-                    while not progress_queue.empty():
-                        yield _sse(progress_queue.get_nowait())
-
-                    error: str | None = None
-                    try:
-                        mcp_result = await call_task
-                        payload = _extract_tool_result(mcp_result)
-                    except Exception as exc:  # noqa: BLE001
-                        error = f"{type(exc).__name__}: {exc}"
-                        payload = {"error": error}
-
-                    duration_ms = int((time.time() - t0) * 1000)
-                    result_str = json.dumps(payload, default=str)
-
-                    yield _sse(
-                        {
-                            "type": "tool_end",
-                            "name": name,
-                            "result": result_str,
-                            "error": error,
-                            "duration_ms": duration_ms,
-                        }
-                    )
-
-                    tool_calls_collected.append(
-                        {
-                            "name": name,
-                            "arguments": args,
-                            "result": payload,
-                            "error": error,
-                            "duration_ms": duration_ms,
-                        }
-                    )
-
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tc["id"],
-                            "name": name,
-                            "content": result_str,
-                        }
-                    )
-
-            else:
-                # Hit iteration cap
-                full_answer.append(
-                    "\n\n_I hit the tool-iteration limit before producing a final answer._"
+                tool_calls_collected.append(
+                    {
+                        "name": name,
+                        "service": owner,
+                        "arguments": args,
+                        "result": payload,
+                        "error": error,
+                        "duration_ms": duration_ms,
+                    }
                 )
 
-        # Surface the final consolidated answer + tool_calls payload to caller
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "name": name,
+                        "content": result_str,
+                    }
+                )
+
+        else:
+            full_answer.append(
+                "\n\n_I hit the tool-iteration limit before producing a final answer._"
+            )
+
         yield _sse(
             {
                 "type": "done",
@@ -329,6 +337,6 @@ async def stream_chat(
             }
         )
 
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.exception("stream_chat failed")
         yield _sse({"type": "error", "message": f"{type(exc).__name__}: {exc}"})

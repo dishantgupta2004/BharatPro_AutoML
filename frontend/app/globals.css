@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 html,
@@ -12,50 +12,116 @@ body {
 }
 
 body {
-  @apply bg-ink-50 text-ink-900 antialiased;
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  @apply bg-canvas-900 text-fg-100 antialiased;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+  background-image:
+    radial-gradient(ellipse 1200px 600px at 50% -10%, rgba(99, 102, 241, 0.08), transparent 60%);
+  background-attachment: fixed;
 }
 
+/* Premium scrollbars ------------------------------------------------------- */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
+::-webkit-scrollbar-track {
+  background: transparent;
+}
 ::-webkit-scrollbar-thumb {
-  @apply bg-ink-200 rounded-full;
+  @apply bg-canvas-500 rounded-full;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-ink-300;
+  @apply bg-canvas-400;
 }
 
-.prose-tight p {
-  margin-block: 0.4rem;
+/* Selection */
+::selection {
+  background: rgba(99, 102, 241, 0.35);
+  color: #fff;
 }
-.prose-tight ul {
-  margin-block: 0.4rem;
+
+/* Grid divider helper ---------------------------------------------------- */
+.divider-x {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0));
+}
+.divider-y {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0));
+}
+
+/* Prose for dark markdown ------------------------------------------------- */
+.prose-dark p {
+  margin-block: 0.5rem;
+  color: theme(colors.fg.100);
+}
+.prose-dark ul {
+  margin-block: 0.5rem;
   padding-left: 1.25rem;
   list-style: disc;
 }
-.prose-tight ol {
-  margin-block: 0.4rem;
+.prose-dark ol {
+  margin-block: 0.5rem;
   padding-left: 1.25rem;
   list-style: decimal;
 }
-.prose-tight code {
-  @apply rounded bg-ink-100 px-1 py-0.5 text-[0.85em] font-mono text-ink-800;
+.prose-dark h1,
+.prose-dark h2,
+.prose-dark h3,
+.prose-dark h4 {
+  color: theme(colors.fg.50);
+  margin-block: 0.8rem 0.4rem;
+  font-weight: 600;
 }
-.prose-tight pre {
-  @apply my-2 overflow-x-auto rounded-lg bg-ink-900 p-3 text-ink-50;
+.prose-dark a {
+  color: theme(colors.accent.400);
+  text-decoration: underline;
+  text-decoration-color: rgba(129, 140, 248, 0.35);
+  text-underline-offset: 2px;
 }
-.prose-tight pre code {
-  @apply bg-transparent p-0 text-ink-50;
+.prose-dark a:hover {
+  color: theme(colors.accent.500);
 }
-.prose-tight table {
-  @apply my-2 w-full border-collapse text-left text-sm;
+.prose-dark code {
+  @apply rounded bg-canvas-700 px-1.5 py-0.5 text-[0.85em] font-mono text-fg-50;
+  border: 1px solid theme(colors.canvas.500);
 }
-.prose-tight th,
-.prose-tight td {
-  @apply border border-ink-200 px-2 py-1;
+.prose-dark pre {
+  @apply my-3 overflow-x-auto rounded-lg bg-canvas-900 p-3 text-fg-100;
+  border: 1px solid theme(colors.canvas.500);
 }
-.prose-tight th {
-  @apply bg-ink-100 font-semibold;
+.prose-dark pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+.prose-dark table {
+  @apply my-3 w-full border-collapse text-left text-sm;
+}
+.prose-dark th,
+.prose-dark td {
+  @apply border border-canvas-500 px-2.5 py-1.5;
+}
+.prose-dark th {
+  @apply bg-canvas-700 font-semibold text-fg-50;
+}
+.prose-dark img {
+  @apply my-3 rounded-lg;
+  border: 1px solid theme(colors.canvas.500);
+}
+.prose-dark blockquote {
+  border-left: 3px solid theme(colors.accent.500);
+  padding-left: 1rem;
+  margin-block: 0.75rem;
+  color: theme(colors.fg.200);
+}
+
+/* Subtle "glow" focus ring on inputs */
+.focus-ring:focus-within {
+  box-shadow: 0 0 0 1px theme(colors.accent.500), 0 0 0 4px rgba(99, 102, 241, 0.15);
+}
+
+/* Kbd inline */
+kbd {
+  @apply rounded border border-canvas-500 bg-canvas-700 px-1.5 py-0.5 text-[10px] font-medium text-fg-200;
 }

@@ -14,7 +14,6 @@ interface Props {
   message: UiMessage;
 }
 
-// Rewrite relative /static/... URLs so images and links work cross-origin
 function rewriteUrl(url: string): string {
   if (url.startsWith("/static/")) return `${API_BASE_URL}${url}`;
   return url;
@@ -27,24 +26,26 @@ export default function MessageBubble({ message }: Props) {
     <div className={`flex gap-3 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
       <div
         className={[
-          "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-          isUser ? "bg-ink-900 text-white" : "bg-brand-600 text-white",
+          "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg shadow-ring",
+          isUser
+            ? "bg-canvas-700 text-fg-100"
+            : "bg-gradient-to-br from-accent-500 to-accent-700 text-white",
         ].join(" ")}
       >
-        {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
+        {isUser ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
       </div>
 
       <div
         className={[
-          "max-w-[78%] rounded-2xl px-4 py-3 text-sm shadow-soft",
+          "max-w-[82%] rounded-2xl px-4 py-2.5 text-[13.5px] leading-relaxed shadow-elevate",
           isUser
-            ? "rounded-tr-sm bg-brand-600 text-white"
-            : "rounded-tl-sm bg-white text-ink-900 ring-1 ring-ink-200",
+            ? "rounded-tr-md bg-accent-600 text-white"
+            : "rounded-tl-md bg-canvas-800 text-fg-100 ring-1 ring-canvas-500",
         ].join(" ")}
       >
         {message.pending && !message.content && !message.activeTool && (
-          <div className="flex items-center gap-2 text-ink-500">
-            <Loader2 className="h-4 w-4 animate-spin" />
+          <div className="flex items-center gap-2 text-fg-300">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
             <span>Thinking…</span>
           </div>
         )}
@@ -59,7 +60,7 @@ export default function MessageBubble({ message }: Props) {
           (isUser ? (
             <div className="whitespace-pre-wrap">{message.content}</div>
           ) : (
-            <div className="prose-tight">
+            <div className="prose-dark">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 urlTransform={rewriteUrl}
@@ -71,7 +72,7 @@ export default function MessageBubble({ message }: Props) {
 
         {!isUser && message.toolCalls && message.toolCalls.length > 0 && (
           <div className="mt-3 space-y-2">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-500">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-fg-300">
               Tool calls ({message.toolCalls.length})
             </div>
             {message.toolCalls.map((c, i) => (
@@ -81,7 +82,7 @@ export default function MessageBubble({ message }: Props) {
         )}
 
         {message.errored && (
-          <div className="mt-2 text-xs text-red-600">
+          <div className="mt-2 text-xs text-status-error">
             Something went wrong with this response.
           </div>
         )}

@@ -9,7 +9,9 @@ import type {
   StreamEvent,
   ToolCallRecord,
   UiMessage,
+  WorkspaceArtifact,
 } from "@/lib/types";
+import { API_BASE_URL } from "@/lib/api";
 
 function uid(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -20,6 +22,8 @@ interface SendArgs {
   activeFile: string | null;
   conversationId: string | null;
   history: ChatMessage[];
+  promptName?: string | null;
+  promptArguments?: Record<string, unknown> | null;
 }
 
 interface UseStreamingChatResult {
@@ -29,15 +33,99 @@ interface UseStreamingChatResult {
   activeTool: ActiveToolBadge | null;
   conversationId: string | null;
   conversationTitle: string | null;
+  artifacts: WorkspaceArtifact[];
+  pushArtifact: (a: WorkspaceArtifact) => void;
+  clearArtifacts: () => void;
   setConversationId: (id: string | null) => void;
   setConversationTitle: (t: string | null) => void;
   reset: () => void;
-  send: (args: SendArgs) => Promise<{
-    conversationId: string | null;
-    answer: string;
-    toolCalls: ToolCallRecord[];
-  }>;
+  send: (args: SendArgs) => Promise<void>;
   abort: () => void;
+}
+
+function absUrl(rel: string): string {
+  if (/^https?:\/\//.test(rel)) return rel;
+  if (rel.startsWith("/")) return `${API_BASE_URL}${rel}`;
+  return rel;
+}
+
+function extractArtifacts(
+  tool: ToolCallRecord,
+  prev: WorkspaceArtifact[],
+): WorkspaceArtifact[] {
+  const newOnes: WorkspaceArtifact[] = [];
+  const visit = (val: unknown): void => {
+    if (val == null) return;
+    if (Array.isArray(val)) {
+      val.forEach(visit);
+      return;
+    }
+    if (typeof val !== "object") return;
+    const obj = val as Record<string, unknown>;
+
+    const push = (kind: WorkspaceArtifact["kind"], url: string, titleHint?: string) => {
+      const absolute = absUrl(url);
+      if (prev.some((a) => a.url === absolute)) return;
+      if (newOnes.some((a) => a.url === absolute)) return;
+      newOnes.push({
+        id: uid(),
+        kind,
+        title: titleHint || absolute.split("/").pop() || absolute,
+        url: absolute,
+        source_tool: tool.name,
+        source_service: tool.service ?? undefined,
+        created_at: Date.now(),
+      });
+    };
+
+    if (typeof obj.plot_url === "string") push("image", obj.plot_url);
+    if (typeof obj.report_url === "string") push("report", obj.report_url);
+    if (typeof obj.notebook_url === "string") push("file", obj.notebook_url);
+    if (typeof obj.pdf_url === "string") push("file", obj.pdf_url);
+    if (typeof obj.download_url === "string" && !obj.notebook_url && !obj.pdf_url) {
+      push("file", obj.download_url);
+    }
+
+    // Tabular: head_rows + columns
+    if (Array.isArray(obj.head_rows) && Array.isArray(obj.columns)) {
+      newOnes.push({
+        id: uid(),
+        kind: "table",
+        title: typeof obj.file === "string" ? `Preview — ${obj.file}` : "Data preview",
+        url: "",
+        source_tool: tool.name,
+        source_service: tool.service ?? undefined,
+        created_at: Date.now(),
+        table: {
+          columns: obj.columns as string[],
+          rows: obj.head_rows as Record<string, unknown>[],
+        },
+      });
+    }
+
+    // Leaderboard tables
+    if (Array.isArray(obj.leaderboard) && obj.leaderboard.length > 0) {
+      const lb = obj.leaderboard as Record<string, unknown>[];
+      const cols = ["model", "cv_mean", "cv_std", "train_seconds", "error"];
+      newOnes.push({
+        id: uid(),
+        kind: "table",
+        title: "Leaderboard",
+        url: "",
+        source_tool: tool.name,
+        source_service: tool.service ?? undefined,
+        created_at: Date.now(),
+        table: { columns: cols, rows: lb },
+      });
+    }
+
+    // Recurse
+    for (const v of Object.values(obj)) {
+      if (v && typeof v === "object") visit(v);
+    }
+  };
+  visit(tool.result);
+  return newOnes;
 }
 
 export function useStreamingChat(): UseStreamingChatResult {
@@ -46,13 +134,21 @@ export function useStreamingChat(): UseStreamingChatResult {
   const [activeTool, setActiveTool] = useState<ActiveToolBadge | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversationTitle, setConversationTitle] = useState<string | null>(null);
+  const [artifacts, setArtifacts] = useState<WorkspaceArtifact[]>([]);
   const abortRef = useRef<AbortController | null>(null);
+
+  const pushArtifact = useCallback((a: WorkspaceArtifact) => {
+    setArtifacts((prev) => [a, ...prev]);
+  }, []);
+
+  const clearArtifacts = useCallback(() => setArtifacts([]), []);
 
   const reset = useCallback(() => {
     setMessages([]);
     setActiveTool(null);
     setConversationId(null);
     setConversationTitle(null);
+    setArtifacts([]);
   }, []);
 
   const abort = useCallback(() => {
@@ -63,16 +159,12 @@ export function useStreamingChat(): UseStreamingChatResult {
   }, []);
 
   const send = useCallback(
-    async ({ query, activeFile, conversationId: cid, history }: SendArgs) => {
+    async ({ query, activeFile, conversationId: cid, history, promptName, promptArguments }: SendArgs) => {
       const userMsg: UiMessage = { id: uid(), role: "user", content: query };
       const pendingId = uid();
       const pendingMsg: UiMessage = {
-        id: pendingId,
-        role: "assistant",
-        content: "",
-        pending: true,
-        toolCalls: [],
-        activeTool: null,
+        id: pendingId, role: "assistant", content: "",
+        pending: true, toolCalls: [], activeTool: null,
       };
       setMessages((prev) => [...prev, userMsg, pendingMsg]);
       setBusy(true);
@@ -81,14 +173,8 @@ export function useStreamingChat(): UseStreamingChatResult {
       const controller = new AbortController();
       abortRef.current = controller;
 
-      let resolvedConversationId = cid;
-      let finalAnswer = "";
-      let finalToolCalls: ToolCallRecord[] = [];
-
       const updatePending = (mutator: (msg: UiMessage) => UiMessage) => {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === pendingId ? mutator(m) : m)),
-        );
+        setMessages((prev) => prev.map((m) => (m.id === pendingId ? mutator(m) : m)));
       };
 
       try {
@@ -98,6 +184,8 @@ export function useStreamingChat(): UseStreamingChatResult {
             active_file: activeFile,
             conversation_id: cid,
             history,
+            prompt_name: promptName ?? null,
+            prompt_arguments: promptArguments ?? null,
           },
           controller.signal,
         );
@@ -105,22 +193,20 @@ export function useStreamingChat(): UseStreamingChatResult {
         for await (const evt of stream as AsyncGenerator<StreamEvent>) {
           switch (evt.type) {
             case "meta": {
-              resolvedConversationId = evt.conversation_id;
               setConversationId(evt.conversation_id);
               setConversationTitle(evt.title);
               break;
             }
             case "token": {
               updatePending((m) => ({
-                ...m,
-                content: m.content + evt.content,
-                pending: true,
+                ...m, content: m.content + evt.content, pending: true,
               }));
               break;
             }
             case "tool_start": {
               const badge: ActiveToolBadge = {
                 name: evt.name,
+                service: evt.service,
                 message: `Calling ${evt.name}…`,
                 percentage: 0,
                 started_at: Date.now(),
@@ -161,6 +247,7 @@ export function useStreamingChat(): UseStreamingChatResult {
               } catch {}
               const record: ToolCallRecord = {
                 name: evt.name,
+                service: evt.service ?? null,
                 arguments: {},
                 result: parsedResult,
                 error: evt.error,
@@ -172,11 +259,14 @@ export function useStreamingChat(): UseStreamingChatResult {
                 activeTool: null,
                 toolCalls: [...(m.toolCalls ?? []), record],
               }));
+              // Extract artifacts into the workspace
+              setArtifacts((prev) => {
+                const found = extractArtifacts(record, prev);
+                return found.length ? [...found, ...prev] : prev;
+              });
               break;
             }
             case "done": {
-              finalAnswer = evt.answer;
-              finalToolCalls = evt.tool_calls;
               updatePending((m) => ({
                 ...m,
                 pending: false,
@@ -199,6 +289,7 @@ export function useStreamingChat(): UseStreamingChatResult {
               }));
               break;
             }
+            // service_status events handled by useServiceNetwork
           }
         }
       } catch (err) {
@@ -215,12 +306,6 @@ export function useStreamingChat(): UseStreamingChatResult {
         setActiveTool(null);
         abortRef.current = null;
       }
-
-      return {
-        conversationId: resolvedConversationId,
-        answer: finalAnswer,
-        toolCalls: finalToolCalls,
-      };
     },
     [],
   );
@@ -232,6 +317,9 @@ export function useStreamingChat(): UseStreamingChatResult {
     activeTool,
     conversationId,
     conversationTitle,
+    artifacts,
+    pushArtifact,
+    clearArtifacts,
     setConversationId,
     setConversationTitle,
     reset,

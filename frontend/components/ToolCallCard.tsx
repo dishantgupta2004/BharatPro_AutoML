@@ -12,12 +12,7 @@ import {
 
 import { useState } from "react";
 
-import {
-  API_BASE_URL,
-  downloadUrl,
-  staticOutputUrl,
-} from "@/lib/api";
-
+import { API_BASE_URL, downloadUrl, staticOutputUrl } from "@/lib/api";
 import type { ToolCallRecord } from "@/lib/types";
 
 interface Props {
@@ -26,7 +21,7 @@ interface Props {
 }
 
 const IMAGE_EXT = /\.(png|jpg|jpeg|gif|webp)$/i;
-const DOWNLOAD_EXT = /\.(py|md|joblib|csv|json|txt|html|parquet)$/i;
+const DOWNLOAD_EXT = /\.(py|md|joblib|csv|json|txt|html|parquet|ipynb|pdf)$/i;
 
 interface Artifact {
   filename: string;
@@ -34,241 +29,157 @@ interface Artifact {
   url: string;
 }
 
-function collectArtifacts(
-  value: unknown,
-  acc: Artifact[] = []
-): Artifact[] {
+function collectArtifacts(value: unknown, acc: Artifact[] = []): Artifact[] {
   if (value == null) return acc;
   if (typeof value === "string") return acc;
-
   if (Array.isArray(value)) {
     value.forEach((v) => collectArtifacts(v, acc));
     return acc;
   }
+  if (typeof value !== "object") return acc;
 
-  if (typeof value === "object") {
-    const obj = value as Record<string, unknown>;
+  const obj = value as Record<string, unknown>;
 
-    // URL fields
-    if (typeof obj.plot_url === "string") {
-      acc.push({
-        filename:
-          obj.plot_url.split("/").pop() || "plot.png",
-        kind: "image",
-        url: `${API_BASE_URL}${obj.plot_url}`,
-      });
-    }
+  const push = (filename: string, kind: Artifact["kind"], url: string) => {
+    if (acc.some((a) => a.url === url)) return;
+    acc.push({ filename, kind, url });
+  };
 
-    if (typeof obj.report_url === "string") {
-      acc.push({
-        filename:
-          obj.report_url.split("/").pop() ||
-          "report.html",
-        kind: "report",
-        url: `${API_BASE_URL}${obj.report_url}`,
-      });
-    }
-
-    // legacy file fields
-    for (const key of [
-      "file",
-      "model_file",
-      "script_file",
-      "plot_file",
-      "report_file",
-    ]) {
-      const v = obj[key];
-
-      if (typeof v === "string") {
-        if (IMAGE_EXT.test(v)) {
-          acc.push({
-            filename: v,
-            kind: "image",
-            url: staticOutputUrl(v),
-          });
-        } else if (DOWNLOAD_EXT.test(v)) {
-          acc.push({
-            filename: v,
-            kind: "file",
-            url: downloadUrl(v),
-          });
-        }
+  for (const [k, v] of Object.entries(obj)) {
+    if (typeof v === "string") {
+      if (k.endsWith("_url")) {
+        const filename = v.split("/").pop() || v;
+        const kind: Artifact["kind"] = k === "report_url"
+          ? "report"
+          : IMAGE_EXT.test(v) ? "image" : "file";
+        push(filename, kind, v.startsWith("http") ? v : `${API_BASE_URL}${v}`);
       }
+    } else if (typeof v === "object") {
+      collectArtifacts(v, acc);
     }
+  }
 
-    Object.values(obj).forEach((v) => {
-      if (typeof v === "object") {
-        collectArtifacts(v, acc);
-      }
-    });
+  // Legacy filename-only fields
+  for (const key of ["file", "model_file", "script_file", "plot_file", "report_file", "notebook_file", "pdf_file"]) {
+    const fn = obj[key];
+    if (typeof fn === "string") {
+      if (IMAGE_EXT.test(fn)) push(fn, "image", staticOutputUrl(fn));
+      else if (DOWNLOAD_EXT.test(fn)) push(fn, "file", downloadUrl(fn));
+    }
   }
 
   return acc;
 }
 
-export default function ToolCallCard({
-  call,
-  index,
-}: Props) {
+export default function ToolCallCard({ call, index }: Props) {
   const [open, setOpen] = useState(false);
-
   const artifacts = collectArtifacts(call.result);
-
   const succeeded = !call.error;
 
   return (
-    <div className="rounded-lg border border-ink-200 bg-ink-50/60">
-
+    <div className="rounded-lg border border-canvas-500 bg-canvas-900/60 transition hover:border-canvas-400">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px]"
       >
         {open ? (
-          <ChevronDown className="h-3.5 w-3.5 text-ink-500" />
+          <ChevronDown className="h-3 w-3 text-fg-300" />
         ) : (
-          <ChevronRight className="h-3.5 w-3.5 text-ink-500" />
+          <ChevronRight className="h-3 w-3 text-fg-300" />
         )}
-
-        <Wrench className="h-3.5 w-3.5 text-brand-600" />
-
-        <span className="font-mono font-semibold text-ink-800">
+        <Wrench className="h-3 w-3 text-accent-400" />
+        <span className="font-mono font-semibold text-fg-50">
           #{index + 1} {call.name}
         </span>
-
-        <span className="text-ink-500">
-          · {call.duration_ms} ms
-        </span>
-
+        {call.service && (
+          <span className="rounded bg-canvas-700 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-fg-300">
+            {call.service}
+          </span>
+        )}
+        <span className="text-fg-300">· {call.duration_ms} ms</span>
         <span className="ml-auto flex items-center gap-1">
-
           {succeeded ? (
             <>
-              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-              <span className="text-emerald-700">
-                ok
-              </span>
+              <CheckCircle2 className="h-3 w-3 text-status-online" />
+              <span className="text-status-online">ok</span>
             </>
           ) : (
             <>
-              <AlertCircle className="h-3.5 w-3.5 text-red-600" />
-              <span className="text-red-700">
-                error
-              </span>
+              <AlertCircle className="h-3 w-3 text-status-error" />
+              <span className="text-status-error">error</span>
             </>
           )}
-
         </span>
       </button>
 
       {open && (
-        <div className="space-y-2 border-t border-ink-200 px-3 py-2 text-xs">
-
-          {Object.keys(call.arguments || {}).length >
-            0 && (
+        <div className="space-y-2 border-t border-canvas-500 px-3 py-2 text-[11px]">
+          {Object.keys(call.arguments || {}).length > 0 && (
             <div>
-              <div className="mb-1 font-semibold text-ink-700">
-                Arguments
-              </div>
-
-              <pre className="overflow-x-auto rounded-md bg-ink-900 p-2 text-ink-50">
-                {JSON.stringify(
-                  call.arguments,
-                  null,
-                  2
-                )}
+              <div className="mb-1 font-semibold text-fg-200">Arguments</div>
+              <pre className="overflow-x-auto rounded-md border border-canvas-500 bg-canvas-900 p-2 text-fg-100">
+                {JSON.stringify(call.arguments, null, 2)}
               </pre>
             </div>
           )}
 
           <div>
-            <div className="mb-1 font-semibold text-ink-700">
+            <div className="mb-1 font-semibold text-fg-200">
               {succeeded ? "Result" : "Error"}
             </div>
-
-            <pre className="max-h-72 overflow-auto rounded-md bg-ink-900 p-2 text-ink-50">
+            <pre className="max-h-72 overflow-auto rounded-md border border-canvas-500 bg-canvas-900 p-2 text-fg-100">
               {succeeded
-                ? JSON.stringify(
-                    call.result,
-                    null,
-                    2
-                  )
-                : call.error ||
-                  "Unknown error"}
+                ? JSON.stringify(call.result, null, 2)
+                : call.error || "Unknown error"}
             </pre>
           </div>
 
           {artifacts.length > 0 && (
             <div>
-
-              <div className="mb-1 font-semibold text-ink-700">
-                Artifacts
-              </div>
-
-              <div className="flex flex-wrap gap-3">
-
+              <div className="mb-1 font-semibold text-fg-200">Artifacts</div>
+              <div className="flex flex-wrap gap-2">
                 {artifacts.map((a, i) =>
                   a.kind === "image" ? (
-
                     <a
                       key={`${a.filename}-${i}`}
                       href={a.url}
                       target="_blank"
                       rel="noreferrer"
-                      className="block max-w-xs rounded-md border border-ink-200 bg-white p-1 hover:border-brand-400"
+                      className="block max-w-[180px] rounded-md border border-canvas-500 bg-canvas-800 p-1 hover:border-accent-500/60"
                     >
-
-                      <img
-                        src={a.url}
-                        alt={a.filename}
-                        className="max-h-60 rounded"
-                      />
-
-                      <div className="mt-1 truncate px-1 text-[11px] text-ink-500">
+                      <img src={a.url} alt={a.filename} className="max-h-32 rounded" />
+                      <div className="mt-1 truncate px-1 text-[9px] text-fg-300">
                         {a.filename}
                       </div>
-
                     </a>
-
                   ) : a.kind === "report" ? (
-
                     <a
                       key={`${a.filename}-${i}`}
                       href={a.url}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-1 rounded-md border border-brand-200 bg-brand-50 px-2 py-1 text-xs text-brand-700"
+                      className="inline-flex items-center gap-1 rounded-md border border-accent-500/30 bg-accent-500/10 px-2 py-1 text-[11px] text-accent-400 hover:bg-accent-500/20"
                     >
-
-                      <ExternalLink className="h-3.5 w-3.5" />
+                      <ExternalLink className="h-3 w-3" />
                       {a.filename}
-
                     </a>
-
                   ) : (
-
                     <a
                       key={`${a.filename}-${i}`}
                       href={a.url}
                       download
-                      className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-2 py-1 text-xs text-ink-700"
+                      className="inline-flex items-center gap-1 rounded-md border border-canvas-500 bg-canvas-800 px-2 py-1 text-[11px] text-fg-100 hover:border-canvas-400"
                     >
-
-                      <Download className="h-3.5 w-3.5" />
+                      <Download className="h-3 w-3" />
                       {a.filename}
-
                     </a>
-
-                  )
+                  ),
                 )}
-
               </div>
-
             </div>
           )}
-
         </div>
       )}
-
     </div>
   );
 }

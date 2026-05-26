@@ -6,6 +6,8 @@ export interface ChatStreamPayload {
   active_file: string | null;
   conversation_id: string | null;
   history: { role: "user" | "assistant"; content: string }[];
+  prompt_name?: string | null;
+  prompt_arguments?: Record<string, unknown> | null;
 }
 
 export async function* openChatStream(
@@ -37,14 +39,12 @@ export async function* openChatStream(
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
-      // SSE frames are separated by a blank line ("\n\n")
       let separator = buffer.indexOf("\n\n");
       while (separator !== -1) {
         const rawFrame = buffer.slice(0, separator);
         buffer = buffer.slice(separator + 2);
         separator = buffer.indexOf("\n\n");
 
-        // A frame may contain multiple "data:" lines; concatenate
         const dataLines = rawFrame
           .split("\n")
           .filter((l) => l.startsWith("data:"))

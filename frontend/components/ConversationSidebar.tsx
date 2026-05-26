@@ -1,6 +1,6 @@
 "use client";
 
-import { MessageSquare, Plus, RotateCw, Trash2 } from "lucide-react";
+import { LifeBuoy, MessageSquare, Plus, RotateCw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import {
@@ -9,10 +9,13 @@ import {
 } from "@/lib/api";
 import type { ConversationSummary } from "@/lib/types";
 
+import ServiceStatusPanel from "./ServiceStatusPanel";
+
 interface Props {
   activeConversationId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onOpenHelp: () => void;
   refreshKey: number;
 }
 
@@ -20,6 +23,7 @@ export default function ConversationSidebar({
   activeConversationId,
   onSelect,
   onNew,
+  onOpenHelp,
   refreshKey,
 }: Props) {
   const [items, setItems] = useState<ConversationSummary[]>([]);
@@ -56,37 +60,64 @@ export default function ConversationSidebar({
   };
 
   return (
-    <aside className="flex h-full w-full flex-col border-r border-ink-200 bg-white">
-      <div className="flex items-center justify-between px-3 py-3">
-        <div className="text-xs font-semibold uppercase tracking-wide text-ink-500">
-          History
+    <aside className="flex h-full w-full flex-col border-r border-canvas-500 bg-canvas-800/40">
+      {/* Brand */}
+      <div className="flex items-center gap-2.5 px-4 py-4">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-accent-500 to-accent-700 shadow-glow">
+          <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 text-white">
+            <path
+              d="M4 7l8-4 8 4-8 4-8-4zm0 5l8 4 8-4m-16 5l8 4 8-4"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </div>
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold text-fg-50">
+            Unisole Empower
+          </div>
+          <div className="truncate text-[10px] uppercase tracking-wider text-fg-300">
+            Distributed AutoML
+          </div>
+        </div>
+      </div>
+
+      <div className="mx-3 h-px divider-y" />
+
+      {/* History */}
+      <div className="flex items-center justify-between px-3 pt-3 pb-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-fg-300">
+          History
+        </span>
         <div className="flex gap-1">
           <button
             onClick={() => void refresh()}
-            className="rounded-md p-1.5 text-ink-500 hover:bg-ink-100"
+            className="rounded-md p-1 text-fg-300 hover:bg-canvas-600 hover:text-fg-100"
             title="Refresh"
           >
-            <RotateCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+            <RotateCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} />
           </button>
           <button
             onClick={onNew}
-            className="flex items-center gap-1 rounded-md bg-brand-600 px-2 py-1 text-xs font-medium text-white hover:bg-brand-700"
+            className="flex items-center gap-1 rounded-md bg-accent-600 px-2 py-1 text-[11px] font-medium text-white shadow-glow transition hover:bg-accent-500"
             title="New conversation"
           >
-            <Plus className="h-3.5 w-3.5" /> New
+            <Plus className="h-3 w-3" />
+            New
           </button>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 pb-3">
         {error && (
-          <div className="m-2 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700">
+          <div className="m-2 rounded-md border border-status-error/30 bg-status-error/10 p-2 text-[11px] text-status-error">
             {error}
           </div>
         )}
         {!error && items.length === 0 && !loading && (
-          <div className="mx-2 mt-2 rounded-md border border-dashed border-ink-200 p-3 text-xs text-ink-500">
+          <div className="mx-2 mt-1 rounded-md border border-dashed border-canvas-500 p-3 text-[11px] text-fg-300">
             No conversations yet. Start chatting to create one.
           </div>
         )}
@@ -101,26 +132,26 @@ export default function ConversationSidebar({
                   className={[
                     "group flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition",
                     isActive
-                      ? "bg-brand-50 text-brand-700 ring-1 ring-brand-200"
-                      : "text-ink-700 hover:bg-ink-100",
+                      ? "bg-accent-500/10 text-fg-50 ring-1 ring-accent-500/30"
+                      : "text-fg-100 hover:bg-canvas-700",
                   ].join(" ")}
                 >
                   <MessageSquare
                     className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${
-                      isActive ? "text-brand-600" : "text-ink-400"
+                      isActive ? "text-accent-400" : "text-fg-300"
                     }`}
                   />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{c.title}</div>
+                    <div className="truncate text-[13px] font-medium">{c.title}</div>
                     {c.active_file && (
-                      <div className="truncate text-[11px] text-ink-500">
+                      <div className="truncate font-mono text-[10px] text-fg-300">
                         {c.active_file}
                       </div>
                     )}
                   </div>
                   <button
                     onClick={(e) => void handleDelete(c.id, e)}
-                    className="invisible rounded p-1 text-ink-400 hover:bg-red-50 hover:text-red-600 group-hover:visible"
+                    className="invisible rounded p-1 text-fg-300 hover:bg-status-error/10 hover:text-status-error group-hover:visible"
                     title="Delete"
                   >
                     <Trash2 className="h-3 w-3" />
@@ -130,6 +161,22 @@ export default function ConversationSidebar({
             );
           })}
         </ul>
+      </div>
+
+      {/* Network status block */}
+      <div className="px-3 pb-3">
+        <ServiceStatusPanel />
+      </div>
+
+      {/* Footer — support */}
+      <div className="border-t border-canvas-500 px-3 py-2.5">
+        <button
+          onClick={onOpenHelp}
+          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[12px] text-fg-200 transition hover:bg-canvas-700 hover:text-fg-50"
+        >
+          <LifeBuoy className="h-3.5 w-3.5 text-accent-400" />
+          Help & Support
+        </button>
       </div>
     </aside>
   );

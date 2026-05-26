@@ -15,10 +15,14 @@ class ChatRequest(BaseModel):
     active_file: str | None = None
     conversation_id: str | None = None
     history: list[ChatMessage] = Field(default_factory=list)
+    # NEW: when the user fires an MCP prompt template via slash command
+    prompt_name: str | None = None
+    prompt_arguments: dict[str, Any] | None = None
 
 
 class ToolCallRecord(BaseModel):
     name: str
+    service: str | None = None
     arguments: dict[str, Any]
     result: Any
     error: str | None = None

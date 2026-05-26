@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pandas as pd
@@ -13,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from core.config import settings
 from core.logger import get_logger
+from core.mcp_pool import MCPClientPool
 from core.orchestrator import stream_chat
 from database import Conversation, Message, derive_title, get_session, init_db
 from schemas.chat import (
@@ -28,12 +31,10 @@ from schemas.conversation import (
     ConversationMessages,
     MessageItem,
 )
-from tools.data_analysis import list_uploaded_files
 
 log = get_logger("api")
 
 BASE_DIR = Path(__file__).resolve().parent
-MCP_SERVER_SCRIPT = str(BASE_DIR / "mcp_server.py")
 SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
@@ -43,10 +44,49 @@ def _safe_filename(name: str) -> str:
     return cleaned or "upload.csv"
 
 
+# ----------------------------------------------------------------------------
+# Lifespan — bring up the MCPClientPool, tear it down cleanly
+# ----------------------------------------------------------------------------
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    log.info("SQLite ready at automl_local.db")
+    pool = MCPClientPool()
+    try:
+        await pool.start()
+    except Exception as exc:
+        log.exception("Pool startup encountered errors (continuing): %s", exc)
+    app.state.pool = pool
+
+    # Background refresher: every 15s, try to reconnect offline services
+    async def refresher() -> None:
+        while True:
+            await asyncio.sleep(15.0)
+            try:
+                await pool.refresh_all()
+            except Exception as exc:
+                log.warning("refresh_all failed: %s", exc)
+
+    refresh_task = asyncio.create_task(refresher())
+    try:
+        yield
+    finally:
+        refresh_task.cancel()
+        with contextlib_suppress(asyncio.CancelledError):
+            await refresh_task
+        await pool.shutdown()
+
+
+def contextlib_suppress(*exc_types):
+    import contextlib
+    return contextlib.suppress(*exc_types)
+
+
 app = FastAPI(
-    title="AutoML MCP Platform — Phase 2",
-    version="0.2.0",
-    description="Streaming FastAPI backend, SQLite persistence, advanced AutoML.",
+    title="Unisole Empower — Distributed AutoML Orchestrator",
+    version="0.3.0",
+    description="Multi-MCP backend coordinating 5 microservices over HTTP/SSE.",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -57,13 +97,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-@app.on_event("startup")
-def _startup() -> None:
-    init_db()
-    log.info("SQLite DB ready at automl_local.db")
-
-
 # Static mounts ---------------------------------------------------------------
 app.mount("/static/outputs", StaticFiles(directory=str(settings.output_path)), name="outputs")
 app.mount("/static/reports", StaticFiles(directory=str(settings.reports_path)), name="reports")
@@ -71,7 +104,9 @@ app.mount("/static/plots", StaticFiles(directory=str(settings.plots_path)), name
 app.mount("/static/models", StaticFiles(directory=str(settings.models_path)), name="models")
 
 
-# Health / datasets / upload --------------------------------------------------
+# ----------------------------------------------------------------------------
+# Health & service registry
+# ----------------------------------------------------------------------------
 @app.get("/api/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     return HealthResponse(
@@ -82,12 +117,65 @@ def health() -> HealthResponse:
     )
 
 
+@app.get("/api/services")
+def services() -> JSONResponse:
+    """Snapshot of all microservices' health, tool/resource/prompt counts."""
+    pool: MCPClientPool = app.state.pool
+    return JSONResponse(pool.snapshot())
+
+
+@app.post("/api/services/refresh")
+async def refresh_services() -> JSONResponse:
+    pool: MCPClientPool = app.state.pool
+    await pool.refresh_all()
+    return JSONResponse(pool.snapshot())
+
+
+@app.get("/api/services/stream")
+async def services_stream() -> StreamingResponse:
+    """SSE stream of service status changes — consumed by the Network panel."""
+    pool: MCPClientPool = app.state.pool
+
+    async def event_gen():
+        async for evt in pool.status_event_stream():
+            yield "data: " + json.dumps(evt, default=str) + "\n\n"
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@app.get("/api/prompts")
+def list_prompts() -> JSONResponse:
+    """Native MCP prompts available across the network — drives the slash menu."""
+    pool: MCPClientPool = app.state.pool
+    return JSONResponse({"prompts": pool.snapshot()["prompts"]})
+
+
+# ----------------------------------------------------------------------------
+# Datasets & upload
+# ----------------------------------------------------------------------------
 @app.get("/api/datasets", response_model=DatasetListResponse)
 def datasets() -> DatasetListResponse:
-    raw = list_uploaded_files()
-    return DatasetListResponse(
-        count=raw["count"], files=[DatasetItem(**f) for f in raw["files"]]
-    )
+    upload_dir = settings.upload_path
+    files = []
+    for entry in sorted(upload_dir.iterdir()):
+        if entry.is_file() and entry.suffix.lower() in {".csv", ".tsv", ".parquet"}:
+            st = entry.stat()
+            files.append(
+                DatasetItem(
+                    filename=entry.name,
+                    size_kb=round(st.st_size / 1024, 2),
+                    modified_unix=int(st.st_mtime),
+                )
+            )
+    return DatasetListResponse(count=len(files), files=files)
 
 
 @app.post("/api/upload", response_model=UploadResponse)
@@ -113,7 +201,7 @@ async def upload_csv(file: UploadFile = File(...)) -> UploadResponse:
                 target_path.unlink(missing_ok=True)
                 raise HTTPException(
                     status_code=413,
-                    detail=f"File exceeds maximum size of {settings.MAX_UPLOAD_MB} MB.",
+                    detail=f"File exceeds {settings.MAX_UPLOAD_MB} MB.",
                 )
             out.write(chunk)
 
@@ -124,7 +212,7 @@ async def upload_csv(file: UploadFile = File(...)) -> UploadResponse:
         column_names = list(df_head.columns)
     except Exception as exc:
         target_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {exc}") from exc
+        raise HTTPException(status_code=400, detail=f"Failed to parse: {exc}") from exc
 
     return UploadResponse(
         filename=safe_name,
@@ -135,7 +223,9 @@ async def upload_csv(file: UploadFile = File(...)) -> UploadResponse:
     )
 
 
-# Conversation endpoints ------------------------------------------------------
+# ----------------------------------------------------------------------------
+# Conversation endpoints (unchanged from Phase 2)
+# ----------------------------------------------------------------------------
 @app.get("/api/conversations", response_model=ConversationList)
 def list_conversations(db: Session = Depends(get_session)) -> ConversationList:
     rows = (
@@ -191,13 +281,45 @@ def delete_conversation(conversation_id: str, db: Session = Depends(get_session)
     db.commit()
 
 
-# Chat (SSE streaming) --------------------------------------------------------
+# ----------------------------------------------------------------------------
+# Chat (SSE streaming) — now routes through MCPClientPool
+# ----------------------------------------------------------------------------
 @app.post("/api/chat")
 async def chat(req: ChatRequest) -> StreamingResponse:
     if not settings.GROQ_API_KEY:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY is not configured.")
 
-    # Get-or-create conversation + persist the user message immediately
+    pool: MCPClientPool = app.state.pool
+
+    # Resolve native MCP prompt if invoked via /prompt-name syntax
+    prompt_inject: str | None = None
+    user_text = req.query.strip()
+    if req.prompt_name:
+        try:
+            prompt_result = await pool.get_prompt(
+                req.prompt_name, req.prompt_arguments or {}
+            )
+            # fastmcp prompts return a list of messages; flatten the text payload
+            if hasattr(prompt_result, "messages") and prompt_result.messages:
+                parts: list[str] = []
+                for m in prompt_result.messages:
+                    content = getattr(m, "content", None)
+                    if isinstance(content, str):
+                        parts.append(content)
+                    elif hasattr(content, "text"):
+                        parts.append(content.text)
+                    elif isinstance(content, list):
+                        for block in content:
+                            txt = getattr(block, "text", None)
+                            if txt:
+                                parts.append(txt)
+                prompt_inject = "\n\n".join(parts)
+            else:
+                prompt_inject = str(prompt_result)
+        except Exception as exc:
+            log.warning("Prompt resolution failed: %s", exc)
+
+    # Conversation persistence: get-or-create
     db: Session = next(get_session())
     try:
         if req.conversation_id:
@@ -205,7 +327,9 @@ async def chat(req: ChatRequest) -> StreamingResponse:
             if not convo:
                 raise HTTPException(status_code=404, detail="Conversation not found.")
         else:
-            convo = Conversation(title=derive_title(req.query), active_file=req.active_file)
+            convo = Conversation(
+                title=derive_title(req.query), active_file=req.active_file
+            )
             db.add(convo)
             db.commit()
             db.refresh(convo)
@@ -220,18 +344,20 @@ async def chat(req: ChatRequest) -> StreamingResponse:
         conversation_id = convo.id
         conversation_title = convo.title
 
-        # Build history from DB if not supplied
         if not req.history:
             stored = (
                 db.query(Message)
-                .filter(Message.conversation_id == convo.id, Message.role.in_(("user", "assistant")))
+                .filter(
+                    Message.conversation_id == convo.id,
+                    Message.role.in_(("user", "assistant")),
+                )
                 .order_by(Message.created_at.asc())
                 .all()
             )
             history = [
                 {"role": m.role, "content": m.content}
                 for m in stored
-                if m.id != user_msg.id and m.content  # exclude the message just inserted
+                if m.id != user_msg.id and m.content
             ]
         else:
             history = [{"role": m.role, "content": m.content} for m in req.history]
@@ -242,11 +368,15 @@ async def chat(req: ChatRequest) -> StreamingResponse:
     active_file = req.active_file
 
     async def event_generator():
-        # Send conversation meta first so the frontend knows the ID for new chats
         yield (
             "data: "
             + json.dumps(
-                {"type": "meta", "conversation_id": conversation_id, "title": conversation_title}
+                {
+                    "type": "meta",
+                    "conversation_id": conversation_id,
+                    "title": conversation_title,
+                    "prompt_name": req.prompt_name,
+                }
             )
             + "\n\n"
         )
@@ -255,12 +385,12 @@ async def chat(req: ChatRequest) -> StreamingResponse:
         final_tool_calls: list[dict] = []
 
         async for chunk in stream_chat(
-            query=req.query,
+            query=user_text,
             active_file=active_file,
             history=history,
-            mcp_server_script=MCP_SERVER_SCRIPT,
+            pool=pool,
+            prompt_inject=prompt_inject,
         ):
-            # Parse to keep a running copy for persistence; pass through to client either way
             try:
                 payload = json.loads(chunk.removeprefix("data: ").strip())
             except (json.JSONDecodeError, AttributeError):
@@ -306,7 +436,12 @@ async def chat(req: ChatRequest) -> StreamingResponse:
 @app.get("/api/download/{filename}")
 def download_output(filename: str) -> FileResponse:
     safe = Path(filename).name
-    for base in (settings.output_path, settings.reports_path, settings.plots_path, settings.models_path):
+    for base in (
+        settings.output_path,
+        settings.reports_path,
+        settings.plots_path,
+        settings.models_path,
+    ):
         cand = base / safe
         if cand.exists() and cand.is_file():
             return FileResponse(path=str(cand), filename=safe)
@@ -317,14 +452,18 @@ def download_output(filename: str) -> FileResponse:
 def root() -> JSONResponse:
     return JSONResponse(
         {
-            "name": "AutoML MCP Platform — Phase 2",
+            "name": "Unisole Empower — Distributed AutoML Orchestrator",
+            "version": "0.3.0",
+            "support_email": "unisole.empower@gmail.com",
             "endpoints": {
                 "health": "/api/health",
+                "services": "/api/services",
+                "services_stream": "/api/services/stream",
+                "prompts": "/api/prompts",
                 "upload": "POST /api/upload",
                 "chat": "POST /api/chat (SSE)",
                 "datasets": "/api/datasets",
                 "conversations": "/api/conversations",
-                "conversation_messages": "/api/conversations/{id}/messages",
                 "static": "/static/{outputs|reports|plots|models}/{filename}",
             },
         }

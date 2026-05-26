@@ -1,71 +1,113 @@
 "use client";
 
-import { BarChart3, Brain, FileSpreadsheet, Sparkles } from "lucide-react";
+import {
+  BarChart3,
+  Brain,
+  FileText,
+  Layers,
+  Search,
+  Sparkles,
+} from "lucide-react";
 
 interface Props {
-  hasActiveFile: boolean;
   onSuggestion: (text: string) => void;
+  hasActiveFile: boolean;
 }
 
 const SUGGESTIONS = [
   {
-    icon: FileSpreadsheet,
-    title: "Peek at the data",
-    prompt: "Show me the first 5 rows and the column types.",
+    icon: Search,
+    title: "Profile my dataset",
+    detail: "Run schema validation and a full EDA report.",
+    text: "Validate the schema of my dataset, then generate a full EDA report with a correlation matrix.",
+    services: ["mcp-data", "mcp-eda"],
   },
   {
     icon: BarChart3,
-    title: "Generate an EDA report",
-    prompt: "Run an EDA report on my dataset and summarize the key findings.",
-  },
-  {
-    icon: Sparkles,
-    title: "Visualize a column",
-    prompt: "Plot a correlation heatmap for the numeric columns.",
+    title: "Train a baseline",
+    detail: "Race Random Forest vs XGBoost vs LightGBM.",
+    text: "Train a baseline classifier on my dataset — pick the target column from the schema and run a parallel bake-off.",
+    services: ["mcp-modeling"],
   },
   {
     icon: Brain,
-    title: "Train a baseline model",
-    prompt: "Train a baseline Random Forest. The target column is …",
+    title: "Explain the champion",
+    detail: "SHAP values + feature importance card.",
+    text: "After training, compute SHAP values for the champion and render a feature importance plot.",
+    services: ["mcp-explain"],
+  },
+  {
+    icon: FileText,
+    title: "Ship the pipeline",
+    detail: "Generate a runnable notebook + PDF report.",
+    text: "Generate a Jupyter notebook reproducing my pipeline, then compile a PDF report with the leaderboard.",
+    services: ["mcp-export"],
   },
 ];
 
-export default function EmptyState({ hasActiveFile, onSuggestion }: Props) {
+export default function EmptyState({ onSuggestion, hasActiveFile }: Props) {
   return (
-    <div className="flex h-full flex-col items-center justify-center px-6 py-10 text-center">
-      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-600 text-white shadow-soft">
-        <Brain className="h-7 w-7" />
+    <div className="mx-auto flex h-full max-w-3xl flex-col items-center justify-center px-6 py-10 text-center">
+      <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-accent-500 to-accent-700 shadow-glow">
+        <Layers className="h-7 w-7 text-white" />
       </div>
-      <h1 className="mt-4 text-2xl font-semibold text-ink-900">
-        Chat with your dataset
+
+      <div className="mb-1 inline-flex items-center gap-1.5 rounded-full border border-canvas-500 bg-canvas-800 px-3 py-1 text-[10px] uppercase tracking-wider text-fg-300">
+        <Sparkles className="h-3 w-3 text-accent-400" />
+        Distributed AutoML · 5 MCP services
+      </div>
+
+      <h1 className="mt-3 text-2xl font-semibold text-fg-50">
+        Unisole Empower
       </h1>
-      <p className="mt-1 max-w-md text-sm text-ink-500">
-        Upload a CSV on the left, then ask questions. The assistant calls local MCP
-        tools to read the file, run EDA, plot charts, and train baseline models.
+      <p className="mt-1.5 max-w-md text-[13px] text-fg-200">
+        Your copilot orchestrates data, EDA, modeling, explainability, and
+        export microservices over MCP — ask in plain English, get production
+        artifacts.
       </p>
 
       {!hasActiveFile && (
-        <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          No active dataset selected — upload one first or ask the assistant to list available files.
+        <div className="mt-4 rounded-lg border border-accent-500/30 bg-accent-500/5 px-3 py-2 text-[12px] text-fg-100">
+          <span className="font-semibold text-fg-50">Tip:</span> Upload a CSV in
+          the right panel to get started.
         </div>
       )}
 
-      <div className="mt-8 grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2">
-        {SUGGESTIONS.map((s) => (
-          <button
-            key={s.title}
-            onClick={() => onSuggestion(s.prompt)}
-            className="group flex items-start gap-3 rounded-xl border border-ink-200 bg-white p-4 text-left shadow-soft transition hover:border-brand-400 hover:bg-brand-50/40"
-          >
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600 group-hover:bg-brand-100">
-              <s.icon className="h-5 w-5" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold text-ink-900">{s.title}</div>
-              <div className="mt-0.5 truncate text-xs text-ink-500">{s.prompt}</div>
-            </div>
-          </button>
-        ))}
+      <div className="mt-6 grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2">
+        {SUGGESTIONS.map((s) => {
+          const Icon = s.icon;
+          return (
+            <button
+              key={s.title}
+              onClick={() => onSuggestion(s.text)}
+              className="group flex flex-col gap-1.5 rounded-xl border border-canvas-500 bg-canvas-800/60 p-3 text-left transition hover:-translate-y-0.5 hover:border-accent-500/60 hover:bg-canvas-800 hover:shadow-glow"
+            >
+              <div className="flex items-center gap-2">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-canvas-700 text-accent-400 group-hover:bg-accent-500/15">
+                  <Icon className="h-3.5 w-3.5" />
+                </div>
+                <span className="text-[13px] font-semibold text-fg-50">
+                  {s.title}
+                </span>
+              </div>
+              <p className="text-[11px] text-fg-200">{s.detail}</p>
+              <div className="flex flex-wrap gap-1">
+                {s.services.map((svc) => (
+                  <span
+                    key={svc}
+                    className="rounded bg-canvas-900 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-fg-300"
+                  >
+                    {svc}
+                  </span>
+                ))}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-6 text-[10px] text-fg-300">
+        Press <kbd>/</kbd> in the composer to discover prompt commands.
       </div>
     </div>
   );

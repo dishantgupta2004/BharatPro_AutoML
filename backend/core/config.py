@@ -21,6 +21,13 @@ class Settings(BaseSettings):
     MAX_UPLOAD_MB: int = 200
     CORS_ORIGINS: str = "http://localhost:3000"
 
+    # Microservice registry — all on local loopback
+    MCP_DATA_URL: str = "http://127.0.0.1:8001/mcp"
+    MCP_EDA_URL: str = "http://127.0.0.1:8002/mcp"
+    MCP_MODELING_URL: str = "http://127.0.0.1:8003/mcp"
+    MCP_EXPLAIN_URL: str = "http://127.0.0.1:8004/mcp"
+    MCP_EXPORT_URL: str = "http://127.0.0.1:8005/mcp"
+
     @property
     def upload_path(self) -> Path:
         p = Path(self.UPLOAD_DIR).resolve()
@@ -54,6 +61,17 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def microservice_map(self) -> dict[str, str]:
+        """Service id -> base URL (used by the multi-client pool)."""
+        return {
+            "mcp-data": self.MCP_DATA_URL,
+            "mcp-eda": self.MCP_EDA_URL,
+            "mcp-modeling": self.MCP_MODELING_URL,
+            "mcp-explain": self.MCP_EXPLAIN_URL,
+            "mcp-export": self.MCP_EXPORT_URL,
+        }
 
 
 settings = Settings()

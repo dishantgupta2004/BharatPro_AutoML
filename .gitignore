@@ -36,3 +36,6 @@ backend/outputs/*
 !backend/outputs/.gitkeep
 
 tests/*
+
+
+logs/*

@@ -2,6 +2,7 @@ import type {
   ConversationDetail,
   ConversationList,
   DatasetListResponse,
+  ServicesSnapshot,
   UploadResponse,
 } from "./types";
 
@@ -66,4 +67,32 @@ export async function deleteConversation(id: string): Promise<void> {
 
 export function chatStreamUrl(): string {
   return `${API_BASE}/api/chat`;
+}
+
+export async function fetchServicesSnapshot(): Promise<ServicesSnapshot> {
+  const res = await fetch(`${API_BASE}/api/services`, { cache: "no-store" });
+  return handle<ServicesSnapshot>(res);
+}
+
+export async function refreshServices(): Promise<ServicesSnapshot> {
+  const res = await fetch(`${API_BASE}/api/services/refresh`, { method: "POST" });
+  return handle<ServicesSnapshot>(res);
+}
+
+export function servicesStreamUrl(): string {
+  return `${API_BASE}/api/services/stream`;
+}
+
+export interface PromptListResponse {
+  prompts: {
+    name: string;
+    description: string;
+    service: string;
+    arguments: { name: string; description?: string; required: boolean }[];
+  }[];
+}
+
+export async function listPrompts(): Promise<PromptListResponse> {
+  const res = await fetch(`${API_BASE}/api/prompts`, { cache: "no-store" });
+  return handle<PromptListResponse>(res);
 }
