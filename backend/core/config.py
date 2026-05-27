@@ -18,12 +18,12 @@ class Settings(BaseSettings):
 
     # LLM
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY")
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_MODEL: str = os.getenv("GROQ_MODEL")
     MAX_TOOL_ITERATIONS: int = 8
     MAX_UPLOAD_MB: int = 200
 
     # CORS
-    CORS_ORIGINS: str = "http://localhost:3000"
+    CORS_ORIGINS: str = os.getenv("CORS_ORIGINS")
 
     # Supabase
     SUPABASE_URL: str = os.getenv("SUPABASE_URL")
