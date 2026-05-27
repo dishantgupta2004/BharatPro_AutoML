@@ -12,10 +12,10 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1)
-    active_file: str | None = None
+    active_file: str | None = None      # filename OR dataset UUID
+    dataset_id: str | None = None       # explicit dataset uuid, preferred when known
     conversation_id: str | None = None
     history: list[ChatMessage] = Field(default_factory=list)
-    # NEW: when the user fires an MCP prompt template via slash command
     prompt_name: str | None = None
     prompt_arguments: dict[str, Any] | None = None
 
@@ -30,6 +30,7 @@ class ToolCallRecord(BaseModel):
 
 
 class UploadResponse(BaseModel):
+    dataset_id: str
     filename: str
     size_bytes: int
     rows: int
@@ -38,9 +39,12 @@ class UploadResponse(BaseModel):
 
 
 class DatasetItem(BaseModel):
+    id: str
     filename: str
     size_kb: float
-    modified_unix: int
+    rows: int | None = None
+    columns: int | None = None
+    created_at: str
 
 
 class DatasetListResponse(BaseModel):
@@ -51,5 +55,4 @@ class DatasetListResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     groq_configured: bool
-    upload_dir: str
-    output_dir: str
+    supabase_configured: bool

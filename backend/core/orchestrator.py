@@ -1,12 +1,10 @@
 """SSE-streaming Groq <-> multi-MCP orchestration loop.
 
-This is the heart of the distributed Unisole Empower platform: it presents a
-single, flat tool catalog to the Groq LLM (assembled from 5 upstream MCP
-microservices) and transparently routes each tool call to its owning service
-via the shared `MCPClientPool`.
-
-Emits the same SSE protocol the frontend already speaks, plus a new
-`service_status` event when any microservice changes state.
+Now propagates `user_id` to every tool call via FastMCP's elicit/context system —
+we pipe it through the arguments dict under the `_user_id` key, which each MCP
+tool extracts before forwarding to storage helpers. This is the cleanest way to
+pass per-request context through the MCP tool call boundary without redesigning
+the protocol.
 """
 from __future__ import annotations
 
@@ -28,34 +26,24 @@ researchers, and data engineers exploring datasets and training ML models.
 
 You are connected to a distributed network of FIVE specialized MCP microservices:
 
-  • mcp-data      (Port 8001) — Ingestion, schema, pandera validation
-  • mcp-eda       (Port 8002) — Profiling reports, correlation matrices, charts
-  • mcp-modeling  (Port 8003) — Parallel AutoML bake-off, Optuna hyperparameter sweeps
-  • mcp-explain   (Port 8004) — SHAP values, feature importance, explainability cards
-  • mcp-export    (Port 8005) — Jupyter notebooks, PDF reports
+  • mcp-data      — Ingestion, schema, pandera validation
+  • mcp-eda       — Profiling reports, correlation matrices, charts
+  • mcp-modeling  — Parallel AutoML bake-off, Optuna hyperparameter sweeps
+  • mcp-explain   — SHAP values, feature importance, explainability cards
+  • mcp-export    — Jupyter notebooks, PDF reports
 
-All tools from all 5 services are available to you in a unified catalog. Use them \
-naturally; the platform routes each call to the correct service.
-
-Resources (read-only context):
-  • dataset://{name}/schema           — pandera schema breakdown of a dataset
-  • model://{model_id}/explainability-card — global feature importance + model card
-
-Prompts (multi-step templates the user can invoke with a slash command):
-  • /eda-deep-dive — A systematic 5-stage exploratory data analysis protocol.
+All tools from all 5 services are available to you in a unified catalog.
 
 Rules:
 1. If the user says "my data" / "the dataset" / "this file", use the active_file in \
 context as the file_path. If none is set, call `list_uploaded_files` first.
-2. Always ground factual claims in tool results. Never invent columns, rows, or metrics.
+2. Always ground factual claims in tool results.
 3. When training a model, if the target column is unclear, ASK the user.
 4. After `run_parallel_bake_off` succeeds, you may proactively call \
-`calculate_shap_values` using the returned `model_id` and `x_train_sample_path`.
+`calculate_shap_values` using the returned `model_id`.
 5. When a tool returns `report_url`, `plot_url`, `markdown_embed`, or `download_url`, \
-render it inline as Markdown (`![…](URL)` or `[link](URL)`).
-6. Be concise — short paragraphs, light bullets. Audience: students and analysts.
-7. If a microservice is offline, gracefully tell the user which capability is \
-unavailable and continue with what you can.
+render it inline as Markdown.
+6. Be concise — short paragraphs, light bullets.
 """
 
 
@@ -96,15 +84,11 @@ def _build_messages(
         )
     else:
         sys_lines.append(
-            "\nNo active dataset selected. If a tool needs file_path, ask or call "
-            "list_uploaded_files first."
+            "\nNo active dataset selected. If a tool needs file_path, "
+            "ask or call list_uploaded_files first."
         )
-    online = [
-        s["name"] for s in pool_snapshot["services"] if s["status"] == "online"
-    ]
-    offline = [
-        s["name"] for s in pool_snapshot["services"] if s["status"] != "online"
-    ]
+    online = [s["name"] for s in pool_snapshot["services"] if s["status"] == "online"]
+    offline = [s["name"] for s in pool_snapshot["services"] if s["status"] != "online"]
     sys_lines.append(f"\nMicroservices online: {', '.join(online) or 'none'}.")
     if offline:
         sys_lines.append(f"Microservices offline / degraded: {', '.join(offline)}.")
@@ -121,6 +105,8 @@ async def stream_chat(
     active_file: str | None,
     history: list[dict[str, str]],
     pool: MCPClientPool,
+    user_id: str,
+    conversation_id: str | None = None,
     prompt_inject: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """Run the Groq <-> multi-MCP loop, yielding SSE-formatted event strings."""
@@ -131,29 +117,22 @@ async def stream_chat(
     groq_client = Groq(api_key=settings.GROQ_API_KEY)
     pool_snapshot = pool.snapshot()
     messages = _build_messages(query, history, active_file, pool_snapshot)
-
-    # When the user fired a /eda-deep-dive (or any) prompt template, the
-    # orchestrator can inject the rendered prompt text as a system msg.
     if prompt_inject:
         messages.insert(1, {"role": "system", "content": prompt_inject})
 
     openai_tools = pool.tool_schemas
-    log.info("Streaming with %d unified tools", len(openai_tools))
 
-    # Progress bridge from MCP -> SSE
     progress_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
     async def progress_handler(
         progress: float, total: float | None = None, message: str | None = None
     ) -> None:
         pct = (float(progress) / float(total) * 100.0) if total else float(progress)
-        await progress_queue.put(
-            {
-                "type": "tool_progress",
-                "message": message or "Working…",
-                "percentage": round(pct, 1),
-            }
-        )
+        await progress_queue.put({
+            "type": "tool_progress",
+            "message": message or "Working…",
+            "percentage": round(pct, 1),
+        })
 
     full_answer: list[str] = []
     tool_calls_collected: list[dict[str, Any]] = []
@@ -162,13 +141,10 @@ async def stream_chat(
         for step in range(settings.MAX_TOOL_ITERATIONS):
             stream = await asyncio.to_thread(
                 groq_client.chat.completions.create,
-                model=settings.GROQ_MODEL,
-                messages=messages,
+                model=settings.GROQ_MODEL, messages=messages,
                 tools=openai_tools if openai_tools else None,
                 tool_choice="auto" if openai_tools else None,
-                temperature=0.2,
-                max_tokens=2048,
-                stream=True,
+                temperature=0.2, max_tokens=2048, stream=True,
             )
 
             assistant_text: list[str] = []
@@ -209,14 +185,12 @@ async def stream_chat(
                             except json.JSONDecodeError:
                                 partial_args = {}
                             owner = pool.service_for_tool(slot["name"]) or "unknown"
-                            yield _sse(
-                                {
-                                    "type": "tool_start",
-                                    "name": slot["name"],
-                                    "service": owner,
-                                    "arguments": partial_args,
-                                }
-                            )
+                            yield _sse({
+                                "type": "tool_start",
+                                "name": slot["name"],
+                                "service": owner,
+                                "arguments": partial_args,
+                            })
 
             joined_text = "".join(assistant_text)
             if joined_text:
@@ -227,31 +201,27 @@ async def stream_chat(
                 break
 
             ordered = [pending_tool_calls[i] for i in sorted(pending_tool_calls.keys())]
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": joined_text,
-                    "tool_calls": [
-                        {
-                            "id": tc["id"],
-                            "type": "function",
-                            "function": {
-                                "name": tc["name"],
-                                "arguments": tc["arguments"] or "{}",
-                            },
-                        }
-                        for tc in ordered
-                    ],
-                }
-            )
+            messages.append({
+                "role": "assistant", "content": joined_text,
+                "tool_calls": [
+                    {"id": tc["id"], "type": "function",
+                     "function": {"name": tc["name"],
+                                  "arguments": tc["arguments"] or "{}"}}
+                    for tc in ordered
+                ],
+            })
 
-            # Execute each tool, draining progress events in between
             for tc in ordered:
                 name = tc["name"]
                 try:
                     args = json.loads(tc["arguments"] or "{}")
                 except json.JSONDecodeError:
                     args = {}
+                # Inject the per-request user context for storage scoping
+                args["_user_id"] = user_id
+                if conversation_id:
+                    args["_conversation_id"] = conversation_id
+
                 owner = pool.service_for_tool(name) or "unknown"
                 t0 = time.time()
 
@@ -266,7 +236,6 @@ async def stream_chat(
                     except asyncio.TimeoutError:
                         if call_task.done():
                             break
-
                 while not progress_queue.empty():
                     yield _sse(progress_queue.get_nowait())
 
@@ -277,65 +246,41 @@ async def stream_chat(
                 except Exception as exc:
                     error = f"{type(exc).__name__}: {exc}"
                     payload = {"error": error, "service": owner}
-                    # Resilience: notify the UI that the service that owned this
-                    # tool may be down, but keep iterating with the others.
-                    yield _sse(
-                        {
-                            "type": "service_status",
-                            "service": {
-                                "name": owner,
-                                "status": "error",
-                                "last_error": error,
-                            },
-                        }
-                    )
+                    yield _sse({"type": "service_status",
+                                "service": {"name": owner, "status": "error",
+                                            "last_error": error}})
 
                 duration_ms = int((time.time() - t0) * 1000)
+                # Strip internal args from the result echoed back to the UI
+                public_args = {k: v for k, v in args.items() if not k.startswith("_")}
                 result_str = json.dumps(payload, default=str)
 
-                yield _sse(
-                    {
-                        "type": "tool_end",
-                        "name": name,
-                        "service": owner,
-                        "result": result_str,
-                        "error": error,
-                        "duration_ms": duration_ms,
-                    }
-                )
+                yield _sse({
+                    "type": "tool_end", "name": name, "service": owner,
+                    "result": result_str, "error": error,
+                    "duration_ms": duration_ms,
+                })
 
-                tool_calls_collected.append(
-                    {
-                        "name": name,
-                        "service": owner,
-                        "arguments": args,
-                        "result": payload,
-                        "error": error,
-                        "duration_ms": duration_ms,
-                    }
-                )
+                tool_calls_collected.append({
+                    "name": name, "service": owner, "arguments": public_args,
+                    "result": payload, "error": error, "duration_ms": duration_ms,
+                })
 
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc["id"],
-                        "name": name,
-                        "content": result_str,
-                    }
-                )
+                messages.append({
+                    "role": "tool", "tool_call_id": tc["id"],
+                    "name": name, "content": result_str,
+                })
 
         else:
             full_answer.append(
                 "\n\n_I hit the tool-iteration limit before producing a final answer._"
             )
 
-        yield _sse(
-            {
-                "type": "done",
-                "answer": "".join(full_answer),
-                "tool_calls": tool_calls_collected,
-            }
-        )
+        yield _sse({
+            "type": "done",
+            "answer": "".join(full_answer),
+            "tool_calls": tool_calls_collected,
+        })
 
     except Exception as exc:
         log.exception("stream_chat failed")
