@@ -8,7 +8,7 @@ interface Props {
   onClose: () => void;
 }
 
-const SUPPORT_EMAIL = "unisole.empower@gmail.com";
+const SUPPORT_EMAIL = "admin@nskailabs.com";
 
 const QUICKSTART = [
   {
@@ -62,12 +62,12 @@ export default function HelpDialog({ open, onClose }: Props) {
 
         <div className="mb-4 flex items-center gap-2">
           <Sparkles className="h-5 w-5 text-accent-400" />
-          <h2 className="text-lg font-semibold text-fg-50">Welcome to Unisole Empower</h2>
+          <h2 className="text-lg font-semibold text-fg-50">Welcome to BharatPro AutoML</h2>
         </div>
 
         <p className="text-sm text-fg-200">
-          A distributed AutoML copilot powered by five MCP microservices working in
-          concert. Here's how to get the most out of it:
+          NSK AI Labs BharatPro AutoML — an AI-native platform powered by five MCP
+          microservices. Here&apos;s how to get started:
         </p>
 
         <div className="mt-4 space-y-3">
@@ -85,7 +85,7 @@ export default function HelpDialog({ open, onClose }: Props) {
             Need help?
           </div>
           <p className="mt-1 text-[12px] text-fg-200">
-            Reach the Unisole team at{" "}
+            Reach NSK AI Labs at{" "}
             <a
               href={`mailto:${SUPPORT_EMAIL}`}
               className="font-mono text-accent-400 underline decoration-accent-500/40 underline-offset-2 hover:text-accent-500"

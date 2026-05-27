@@ -21,8 +21,8 @@ from core.mcp_pool import MCPClientPool
 
 log = get_logger("orchestrator")
 
-SYSTEM_PROMPT = """You are **Unisole Empower Copilot**, an AI assistant for students, \
-researchers, and data engineers exploring datasets and training ML models.
+SYSTEM_PROMPT = """You are **BharatPro AutoML Copilot** by NSK AI Labs, an AI assistant for \
+students, researchers, and data engineers exploring datasets and training ML models.
 
 You are connected to a distributed network of FIVE specialized MCP microservices:
 

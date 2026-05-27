@@ -1,0 +1,178 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bharatpro-automl-backend"
+version = "1.0.0"
+description = "NSK AI Labs BharatPro AutoML — distributed AutoML MCP backend (FastAPI + 5 in-process FastMCP servers, Supabase, Groq)"
+readme = "../README.md"
+requires-python = ">=3.11,<3.13"
+license = { text = "Proprietary" }
+authors = [{ name = "NSK AI Labs", email = "admin@nskailabs.com" }]
+keywords = ["automl", "mcp", "fastapi", "supabase", "groq", "bharatpro", "nskailabs"]
+classifiers = [
+  "Private :: Do Not Upload",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Framework :: FastAPI",
+  "Operating System :: POSIX :: Linux",
+]
+
+dependencies = [
+  # ── Web layer ──────────────────────────────────────────────
+  "fastapi>=0.115.0,<1.0",
+  "uvicorn[standard]>=0.32.0,<1.0",
+  "python-multipart>=0.0.12",
+  "httpx>=0.27.0,<1.0",
+  "sse-starlette>=2.1.3",            # optional but handy; FastAPI's StreamingResponse is fine without it
+
+  # ── Settings + env ─────────────────────────────────────────
+  "pydantic>=2.9.0,<3.0",
+  "pydantic-settings>=2.6.0,<3.0",
+  "python-dotenv>=1.0.1",
+
+  # ── Auth (Supabase JWT verification) ───────────────────────
+  "pyjwt[crypto]>=2.9.0,<3.0",
+
+  # ── Supabase (DB + Storage + Auth) ─────────────────────────
+  "supabase>=2.9.0,<3.0",
+  "storage3>=0.8.0,<1.0",            # explicit pin — supabase-py's storage client; signed-URL response shape is stable from here
+
+  # ── MCP ────────────────────────────────────────────────────
+  "fastmcp>=2.0.0,<4.0",
+
+  # ── LLM ────────────────────────────────────────────────────
+  "groq>=0.11.0,<1.0",
+
+  # ── Data + ML core ─────────────────────────────────────────
+  "pandas>=2.2.0,<3.0",
+  "numpy>=1.26.0,<3.0",
+  "scikit-learn>=1.5.0,<2.0",
+  "pandera>=0.20.0,<1.0",
+  "joblib>=1.4.2",
+  "pyarrow>=17.0.0",                 # parquet round-trip for X_train samples
+
+  # ── Boosters + tuning ──────────────────────────────────────
+  "xgboost>=2.1.0,<3.0",
+  "lightgbm>=4.5.0,<5.0",
+  "optuna>=4.0.0,<5.0",
+
+  # ── Explainability ─────────────────────────────────────────
+  "shap>=0.46.0,<1.0",
+
+  # ── Plotting (Agg backend on the server) ───────────────────
+  "matplotlib>=3.9.0,<4.0",
+  "seaborn>=0.13.2,<1.0",
+
+  # ── Notebook + PDF export ──────────────────────────────────
+  "nbformat>=5.10.0",
+  "nbconvert>=7.16.0",
+  "reportlab>=4.2.0,<5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.7.0",
+  "mypy>=1.13.0",
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.24.0",
+  "pytest-httpx>=0.32.0",
+  "ipython>=8.27.0",
+  "types-requests",
+]
+
+[project.urls]
+Repository = "https://github.com/your-org/bharatpro-automl"
+Issues     = "https://github.com/your-org/bharatpro-automl/issues"
+
+# ──────────────────────────────────────────────────────────────
+# Hatch build config
+#
+# Backend is an *application*, not a library. We only treat `core/` and
+# `schemas/` as real packages so `pip install .` succeeds; the top-level
+# scripts (`main.py`, `auth.py`, `database.py`, `mcp_*.py`) are entrypoints
+# imported by path when uvicorn runs from the backend directory.
+# ──────────────────────────────────────────────────────────────
+[tool.hatch.build.targets.wheel]
+packages = ["core", "schemas"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"auth.py" = "auth.py"
+"database.py" = "database.py"
+"main.py" = "main.py"
+"mcp_data.py" = "mcp_data.py"
+"mcp_eda.py" = "mcp_eda.py"
+"mcp_modeling.py" = "mcp_modeling.py"
+"mcp_explain.py" = "mcp_explain.py"
+"mcp_export.py" = "mcp_export.py"
+
+# ──────────────────────────────────────────────────────────────
+# Ruff — lint + format
+# ──────────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["_legacy", "outputs", "uploads", ".venv"]
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "W",   # pycodestyle + pyflakes
+  "I",             # isort
+  "UP",            # pyupgrade
+  "B",             # bugbear
+  "SIM",           # simplify
+  "RUF",           # ruff-specific
+  "PL",            # pylint subset
+  "C4",            # comprehensions
+]
+ignore = [
+  "E501",      # line length — formatter handles it
+  "B008",      # function calls in defaults — required for FastAPI Depends()
+  "PLR0913",   # too many arguments — common in MCP tool signatures
+  "PLR2004",   # magic numbers — fine in ML code
+  "PLR0915",   # too many statements — bake-off function is long for a reason
+]
+
+[tool.ruff.lint.per-file-ignores]
+"_legacy/*"   = ["F401", "F403", "F841", "E501", "B", "SIM", "PL", "UP"]
+"mcp_*.py"    = ["PLR0913"]   # MCP tools legitimately take many args
+"tests/*"     = ["PLR2004", "S101"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["core", "schemas", "auth", "database", "supabase_client"]
+combine-as-imports = true
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ──────────────────────────────────────────────────────────────
+# Mypy — pragmatic, not strict (the ML deps are mostly untyped)
+# ──────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+no_implicit_optional = true
+check_untyped_defs = true
+exclude = ['_legacy/', 'outputs/', 'uploads/']
+
+[[tool.mypy.overrides]]
+module = ["xgboost.*", "lightgbm.*", "shap.*", "optuna.*", "pandera.*", "reportlab.*", "nbformat.*", "nbconvert.*"]
+ignore_missing_imports = true
+
+# ──────────────────────────────────────────────────────────────
+# Pytest
+# ──────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+  "integration: hits real Supabase / Groq — skipped by default in CI",
+  "slow: longer than 5 seconds",
+]

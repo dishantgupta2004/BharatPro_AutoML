@@ -1,28 +1,30 @@
 <div align="center">
 
-# Unisole Empower
+# NSK AI Labs — BharatPro AutoML
 
-**Distributed AutoML copilot powered by five MCP microservices.**
+**AI-native AutoML platform powered by five MCP microservices.**
 
 Ask in plain English. Get real notebooks, models, and reports.
+
+*NSK AI Labs · MetaOptics + AI Research*
 
 </div>
 
 ---
 
-Unisole Empower is an enterprise-grade AutoML platform that orchestrates five specialized [Model Context Protocol](https://modelcontextprotocol.io) microservices behind a single conversational interface. Upload a CSV, describe your goal in natural language, and the platform plans, executes, and packages a full data science pipeline — exploratory analysis, feature engineering, model training, explainability, and downloadable artifact bundles — without you ever writing code.
+BharatPro AutoML by NSK AI Labs is an enterprise-grade AutoML platform that orchestrates five specialized [Model Context Protocol](https://modelcontextprotocol.io) microservices behind a single conversational interface. Upload a CSV, describe your goal in natural language, and the platform plans, executes, and packages a full data science pipeline — exploratory analysis, feature engineering, model training, explainability, and downloadable artifact bundles — without you ever writing code.
 
 The interface is built for students, analysts, and ML engineers who want production-quality output with chat-first ergonomics. The architecture is built for teams who want to extend, swap, or scale any pipeline stage independently.
 
-**Stack:** Python 3.11 · FastAPI · FastMCP 3 · Groq (Llama 3.3 70B) · Next.js 15 · React 19 · Tailwind 3.4 · SQLite
+**Stack:** Python 3.11 · FastAPI · FastMCP 3 · Groq (Llama 3.3 70B) · Next.js 15 · React 19 · Tailwind 3.4 · Supabase
 
-**Support:** <unisole.empower@gmail.com>
+**Support:** <admin@nskailabs.com> · [nskailabs.com](https://sites.google.com/nskailabs.com/nskailabs/home)
 
 ---
 
 ## Table of Contents
 
-1. [Why Unisole Empower](#why-unisole-empower)
+1. [Why BharatPro AutoML](#why-bharatpro-automl)
 2. [Architecture](#architecture)
 3. [Microservice Catalog](#microservice-catalog)
 4. [The Artifact Pipeline](#the-artifact-pipeline)
@@ -37,9 +39,9 @@ The interface is built for students, analysts, and ML engineers who want product
 
 ---
 
-## Why Unisole Empower
+## Why BharatPro AutoML
 
-Most AutoML tools force a tradeoff: either a low-code GUI that hides the engineering, or a notebook-first SDK that reproduces nothing. Unisole Empower sits between them — the conversation produces *real, runnable, downloadable artifacts* on every step. Every chart is a PNG on disk. Every model is a pickled scikit-learn pipeline. Every analysis is a Jupyter notebook you can re-execute locally.
+Most AutoML tools force a tradeoff: either a low-code GUI that hides the engineering, or a notebook-first SDK that reproduces nothing. BharatPro AutoML sits between them — the conversation produces *real, runnable, downloadable artifacts* on every step. Every chart is a PNG. Every model is a pickled scikit-learn pipeline. Every analysis is a Jupyter notebook you can re-execute locally.
 
 What makes the platform different:
 
@@ -104,7 +106,7 @@ Each service runs `mcp.run(transport="streamable-http", host="127.0.0.1", port=N
 
 ## The Artifact Pipeline
 
-Unisole Empower produces a **complete, downloadable data science project** in four sequential stages. Each stage writes real files to disk under `outputs/artifacts/{project_id}/<stage>/` — no placeholders, no fake links.
+BharatPro AutoML produces a **complete, downloadable data science project** in four sequential stages. Each stage writes real files to disk under `outputs/artifacts/{project_id}/<stage>/` — no placeholders, no fake links.
 
 ### Stage 1 — Exploratory Data Analysis (`mcp-eda`)
 
@@ -218,7 +220,7 @@ For users who want to inspect the raw tool calls — arguments, results, duratio
 
 ```bash
 # Clone
-git clone <your-repo-url> unisole-empower && cd unisole-empower
+git clone <your-repo-url> bharatpro-automl && cd bharatpro-automl
 
 # Backend: create venv and install
 cd backend
@@ -254,7 +256,7 @@ Open <http://localhost:3000>. Wait for the **MCP Network** sidebar to show **5/5
 ## Project Structure
 
 ```
-unisole-empower/
+bharatpro-automl/
 ├── scripts/
 │   └── start_all.sh                 # boots all 6 processes (5 MCP + 1 FastAPI)
 ├── backend/
@@ -471,7 +473,7 @@ The pool auto-discovers tools/resources/prompts on connection.
 
 Internal use only — license terms TBD.
 
-For questions, bug reports, or partnership inquiries, reach the Unisole team at <unisole.empower@gmail.com>. We typically reply within one business day.
+For questions, bug reports, or partnership inquiries, reach NSK AI Labs at <admin@nskailabs.com> or visit [nskailabs.com](https://sites.google.com/nskailabs.com/nskailabs/home). We typically reply within one business day.
 
 ---
 

@@ -54,14 +54,14 @@ export default function EmptyState({ onSuggestion, hasActiveFile }: Props) {
 
       <div className="mb-1 inline-flex items-center gap-1.5 rounded-full border border-canvas-500 bg-canvas-800 px-3 py-1 text-[10px] uppercase tracking-wider text-fg-300">
         <Sparkles className="h-3 w-3 text-accent-400" />
-        Distributed AutoML · 5 MCP services
+        NSK AI Labs · 5 MCP services
       </div>
 
       <h1 className="mt-3 text-2xl font-semibold text-fg-50">
-        Unisole Empower
+        BharatPro AutoML
       </h1>
       <p className="mt-1.5 max-w-md text-[13px] text-fg-200">
-        Your copilot orchestrates data, EDA, modeling, explainability, and
+        Your AI copilot orchestrates data, EDA, modeling, explainability, and
         export microservices over MCP — ask in plain English, get production
         artifacts.
       </p>

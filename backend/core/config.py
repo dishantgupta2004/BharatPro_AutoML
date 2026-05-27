@@ -29,7 +29,10 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = os.getenv("SUPABASE_URL")
     SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY")
     SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    SUPABASE_JWT_SECRET: str | None = None
+    # Optional: set this for fast local JWT verification (HS256).
+    # Without it, auth falls back to Supabase Auth API validation (slower but always works).
+    # Find it at: Supabase Dashboard → Settings → API → JWT Secret
+    SUPABASE_JWT_SECRET: str = ""
 
     # Buckets
     BUCKET_DATASETS: str = "datasets"
@@ -43,7 +46,7 @@ class Settings(BaseSettings):
 
     # Tmp workspace (ephemeral, per-process). On Render this is fine — used for
     # download → process → upload cycles, no persistence expected.
-    TMP_DIR: str = "/tmp/unisole"
+    TMP_DIR: str = "/tmp/bharatpro"
 
     @property
     def tmp_path(self) -> Path:

@@ -79,10 +79,10 @@ export default function ConversationSidebar({
           </div>
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold text-fg-50">
-              Unisole Empower
+              BharatPro AutoML
             </div>
             <div className="truncate text-[10px] uppercase tracking-wider text-fg-300">
-              Distributed AutoML
+              NSK AI Labs
             </div>
           </div>
         </div>

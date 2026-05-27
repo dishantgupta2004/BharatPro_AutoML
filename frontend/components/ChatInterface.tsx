@@ -53,9 +53,9 @@ export default function ChatInterface() {
   // First-visit help dialog
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (!localStorage.getItem("unisole-onboarded")) {
+    if (!localStorage.getItem("bharatpro-onboarded")) {
       setHelpOpen(true);
-      localStorage.setItem("unisole-onboarded", "1");
+      localStorage.setItem("bharatpro-onboarded", "1");
     }
   }, []);
 

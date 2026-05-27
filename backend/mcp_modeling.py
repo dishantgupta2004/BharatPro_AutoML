@@ -1,4 +1,4 @@
-"""Unisole Empower — Parallel AutoML Engine (in-process MCP server)."""
+"""NSK AI Labs BharatPro AutoML — Parallel AutoML Engine (in-process MCP server)."""
 from __future__ import annotations
 
 import asyncio
@@ -44,12 +44,10 @@ log = logging.getLogger(SERVICE_NAME)
 mcp = FastMCP(name=SERVICE_NAME)
 
 
-def _pop_context(kwargs: dict[str, Any]) -> tuple[str, str | None]:
-    uid = kwargs.pop("_user_id", None)
-    cid = kwargs.pop("_conversation_id", None)
-    if not uid:
+def _require_context(user_id: str, conversation_id: str | None) -> tuple[str, str | None]:
+    if not user_id:
         raise PermissionError("Missing _user_id in tool call context")
-    return uid, cid
+    return user_id, conversation_id
 
 
 def _tmp_workspace(user_id: str) -> Path:
@@ -152,13 +150,26 @@ def _train_one(name, estimator, pre, Xtr, ytr, Xte, yte, problem, cv):
 
 @mcp.tool
 async def run_parallel_bake_off(
-    file_path: str, target_column: str, ctx: Context,
-    test_size: float = 0.2, cv: int = 3, random_state: int = 42,
-    **kwargs: Any,
+    file_path: str,
+    target_column: str,
+    ctx: Context,
+    _user_id: str = "",
+    _conversation_id: str | None = None,
+    test_size: float = 0.2,
+    cv: int = 3,
+    random_state: int = 42,
 ) -> dict[str, Any]:
     """Parallel CV race across RandomForest, XGBoost, LightGBM, and a baseline.
-    Champion + X_train sample are uploaded to Supabase models bucket."""
-    user_id, conversation_id = _pop_context(kwargs)
+    Champion + X_train sample are uploaded to Supabase models bucket.
+
+    Args:
+        file_path: Filename or UUID of an uploaded dataset.
+        target_column: Name of the column to predict.
+        test_size: Fraction for test split (default 0.2).
+        cv: Cross-validation folds (default 3).
+        random_state: Random seed for reproducibility.
+    """
+    user_id, conversation_id = _require_context(_user_id, _conversation_id)
     path = resolve_dataset_for_user(user_id, file_path)
     df = _load(path).dropna(subset=[target_column])
     if target_column not in df.columns:
@@ -296,15 +307,29 @@ async def run_parallel_bake_off(
 
 @mcp.tool
 async def trigger_hyperparameter_sweep(
-    file_path: str, target_column: str, model_family: str,
+    file_path: str,
+    target_column: str,
+    model_family: str,
     ctx: Context,
-    time_budget_seconds: int = 60, cv: int = 3, random_state: int = 42,
-    **kwargs: Any,
+    _user_id: str = "",
+    _conversation_id: str | None = None,
+    time_budget_seconds: int = 60,
+    cv: int = 3,
+    random_state: int = 42,
 ) -> dict[str, Any]:
-    """Optuna TPE sweep with a time-bound budget."""
+    """Optuna TPE hyperparameter sweep with a time-bound budget.
+
+    Args:
+        file_path: Filename or UUID of an uploaded dataset.
+        target_column: Name of the column to predict.
+        model_family: One of 'RandomForest', 'XGBoost', or 'LightGBM'.
+        time_budget_seconds: Search budget in seconds (default 60).
+        cv: Cross-validation folds (default 3).
+        random_state: Random seed.
+    """
     import optuna
 
-    user_id, _ = _pop_context(kwargs)
+    user_id, _ = _require_context(_user_id, _conversation_id)
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     family = model_family.strip()
     if family not in {"RandomForest", "XGBoost", "LightGBM"}:

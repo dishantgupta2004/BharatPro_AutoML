@@ -1,4 +1,4 @@
-"""Unisole Empower — Data Ingestion & Schema (in-process MCP server)."""
+"""NSK AI Labs BharatPro AutoML — Data Ingestion & Schema (in-process MCP server)."""
 from __future__ import annotations
 
 import json
@@ -27,7 +27,7 @@ log = logging.getLogger(SERVICE_NAME)
 mcp = FastMCP(name=SERVICE_NAME)
 
 
-def _pop_user(user_id: str | None) -> str:
+def _require_user(user_id: str) -> str:
     if not user_id:
         raise PermissionError("Missing _user_id in tool call context")
     return user_id
@@ -83,10 +83,14 @@ def _build_schema(rules: dict[str, dict[str, Any]]) -> pa.DataFrameSchema:
             checks.append(pa.Check.isin(rule["allowed_categories"]))
         pandera_dtype: Any = object
         try:
-            if "int" in dtype: pandera_dtype = int
-            elif "float" in dtype: pandera_dtype = float
-            elif "bool" in dtype: pandera_dtype = bool
-            elif "datetime" in dtype: pandera_dtype = "datetime64[ns]"
+            if "int" in dtype:
+                pandera_dtype = int
+            elif "float" in dtype:
+                pandera_dtype = float
+            elif "bool" in dtype:
+                pandera_dtype = bool
+            elif "datetime" in dtype:
+                pandera_dtype = "datetime64[ns]"
         except Exception:
             pandera_dtype = object
         columns[col] = pa.Column(
@@ -98,8 +102,9 @@ def _build_schema(rules: dict[str, dict[str, Any]]) -> pa.DataFrameSchema:
 
 # ── MCP tools ────────────────────────────────────────────────────
 @mcp.tool
-def list_uploaded_files(user_id: str):
-    """List all datasets the user has uploaded."""
+def list_uploaded_files(_user_id: str = "", _conversation_id: str | None = None) -> dict[str, Any]:
+    """List all datasets the current user has uploaded."""
+    user_id = _require_user(_user_id)
     rows = list_datasets(user_id)
     items = [
         {
@@ -116,14 +121,19 @@ def list_uploaded_files(user_id: str):
 
 
 @mcp.tool
-def ingest_dataset(file_path: str, user_id: str, n_preview_rows: int = 5) -> dict[str, Any]:
+def ingest_dataset(
+    file_path: str,
+    _user_id: str = "",
+    _conversation_id: str | None = None,
+    n_preview_rows: int = 5,
+) -> dict[str, Any]:
     """Load a dataset, return shape, dtypes, and head preview.
 
     Args:
         file_path: Filename or UUID of an uploaded dataset.
-        user_id: The ID of the user uploading the dataset.
         n_preview_rows: Head rows to return (capped at 100).
     """
+    user_id = _require_user(_user_id)
     path = resolve_dataset_for_user(user_id, file_path)
     df = _load_df(path)
     n = max(1, min(int(n_preview_rows), 100))
@@ -145,11 +155,13 @@ def ingest_dataset(file_path: str, user_id: str, n_preview_rows: int = 5) -> dic
 @mcp.tool
 def validate_schema_with_pandera(
     file_path: str,
-    user_id: str,
+    _user_id: str = "",
+    _conversation_id: str | None = None,
     expected_columns: list[str] | None = None,
-    strict_dtypes: bool = False
+    strict_dtypes: bool = False,
 ) -> dict[str, Any]:
     """Validate a dataset against an auto-inferred pandera DataFrameSchema."""
+    user_id = _require_user(_user_id)
     path = resolve_dataset_for_user(user_id, file_path)
     df = _load_df(path)
 
@@ -191,19 +203,12 @@ def validate_schema_with_pandera(
 
 
 # ── MCP resource ─────────────────────────────────────────────────
-# NOTE: Resources don't receive per-request kwargs in fastmcp the same way tools
-# do. To keep this Phase C, we look up by filename in a *global* context — and
-# in main.py we expose a parallel REST endpoint `/api/datasets/{id}/schema`
-# that uses the authenticated user. The MCP resource here remains for
-# anonymous/admin introspection only; the schema is also available via the
-# `validate_schema_with_pandera` tool which IS per-user.
 @mcp.resource("dataset://{dataset_name}/schema")
 def dataset_schema_resource(dataset_name: str) -> str:
-    """DEPRECATED for v1 (no user context in MCP resources). Use the
-    `validate_schema_with_pandera` tool instead — it is per-user."""
+    """Use validate_schema_with_pandera tool instead — it carries user context."""
     return json.dumps({
         "warning": (
-            "MCP resources don't carry user context in this version. "
+            "MCP resources don't carry user context. "
             "Call validate_schema_with_pandera(file_path='...') instead."
         ),
         "dataset_name": dataset_name,

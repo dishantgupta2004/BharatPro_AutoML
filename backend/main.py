@@ -51,6 +51,18 @@ def _safe_filename(name: str) -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+
+    # Auth mode announcement
+    if settings.SUPABASE_JWT_SECRET:
+        log.info("Auth mode: LOCAL HS256 (SUPABASE_JWT_SECRET is set — fast path active)")
+    else:
+        log.warning(
+            "Auth mode: SUPABASE API (SUPABASE_JWT_SECRET not set). "
+            "Each request makes a network call to Supabase Auth to validate the token. "
+            "For better performance, set SUPABASE_JWT_SECRET in .env "
+            "(Supabase Dashboard → Settings → API → JWT Secret)."
+        )
+
     pool = MCPClientPool()
     register_default_servers(pool)
     try:
@@ -78,9 +90,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Unisole Empower — Distributed AutoML Orchestrator",
+    title="NSK AI Labs BharatPro AutoML — Orchestrator",
     version="1.0.0",
-    description="In-process MCP backend with Supabase auth + storage.",
+    description="AI-native AutoML platform by NSK AI Labs. In-process MCP backend with Supabase auth + storage.",
     lifespan=lifespan,
 )
 
@@ -105,6 +117,7 @@ def health() -> HealthResponse:
         supabase_configured=bool(
             settings.SUPABASE_URL and settings.SUPABASE_SERVICE_ROLE_KEY
         ),
+        auth_mode="local_hs256" if settings.SUPABASE_JWT_SECRET else "supabase_api",
     )
 
 
@@ -421,7 +434,7 @@ def artifact_redirect(
 @app.get("/")
 def root() -> JSONResponse:
     return JSONResponse({
-        "name": "Unisole Empower — Distributed AutoML Orchestrator",
+        "name": "NSK AI Labs BharatPro AutoML — Orchestrator",
         "version": "1.0.0",
         "endpoints": {
             "health": "/api/health",

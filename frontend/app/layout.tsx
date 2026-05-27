@@ -5,9 +5,11 @@ import { AuthProvider } from "@/lib/auth-context";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Unisole Empower — Distributed AutoML",
+  title: "NSK AI Labs — BharatPro AutoML",
   description:
-    "Enterprise AutoML copilot orchestrating five MCP microservices. Upload data, chat in plain English, ship models.",
+    "AI-native AutoML platform by NSK AI Labs. Orchestrates five MCP microservices — dataset profiling, EDA, model training, explainability, and export.",
+  keywords: ["AutoML", "MCP", "machine learning", "NSK AI Labs", "BharatPro", "data science"],
+  authors: [{ name: "NSK AI Labs", url: "https://sites.google.com/nskailabs.com/nskailabs/home" }],
   icons: { icon: "/favicon.svg" },
 };
 

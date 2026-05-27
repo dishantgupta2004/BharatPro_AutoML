@@ -260,12 +260,21 @@ def _to_openai_schema(canonical_name: str, tool: Any) -> dict[str, Any]:
     schema = getattr(tool, "inputSchema", None) or {}
     if not isinstance(schema, dict) or "type" not in schema:
         schema = {"type": "object", "properties": {}}
+    # Strip internal injection params (_user_id, _conversation_id) from the LLM-visible schema
+    filtered = dict(schema)
+    if "properties" in filtered:
+        filtered["properties"] = {
+            k: v for k, v in filtered["properties"].items()
+            if not k.startswith("_")
+        }
+    if "required" in filtered:
+        filtered["required"] = [r for r in filtered["required"] if not r.startswith("_")]
     return {
         "type": "function",
         "function": {
             "name": canonical_name,
             "description": (tool.description or "").strip(),
-            "parameters": schema,
+            "parameters": filtered,
         },
     }
 

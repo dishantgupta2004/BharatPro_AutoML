@@ -56,3 +56,4 @@ class HealthResponse(BaseModel):
     status: str
     groq_configured: bool
     supabase_configured: bool
+    auth_mode: str  # "local_hs256" | "supabase_api"

@@ -1,4 +1,4 @@
-"""Unisole Empower — Explainable AI (in-process MCP server)."""
+"""NSK AI Labs BharatPro AutoML — Explainable AI (in-process MCP server)."""
 from __future__ import annotations
 
 import json
@@ -18,7 +18,7 @@ from fastmcp import Context, FastMCP
 
 from core.config import settings
 from core.storage import download_artifact_to_tmp, upload_artifact
-from supabase_client import sb
+from core.supabase_client import sb
 
 SERVICE_NAME = "mcp-explain"
 
@@ -32,12 +32,10 @@ log = logging.getLogger(SERVICE_NAME)
 mcp = FastMCP(name=SERVICE_NAME)
 
 
-def _pop_context(kwargs: dict[str, Any]) -> tuple[str, str | None]:
-    uid = kwargs.pop("_user_id", None)
-    cid = kwargs.pop("_conversation_id", None)
-    if not uid:
+def _require_context(user_id: str, conversation_id: str | None) -> tuple[str, str | None]:
+    if not user_id:
         raise PermissionError("Missing _user_id in tool call context")
-    return uid, cid
+    return user_id, conversation_id
 
 
 def _tmp_workspace(user_id: str) -> Path:
@@ -54,14 +52,23 @@ def _load_model_artifact(user_id: str, model_id: str) -> tuple[Path, dict[str, A
 
 @mcp.tool
 async def calculate_shap_values(
-    model_id: str, x_train_sample_id: str,
-    ctx: Context, max_samples: int = 200,
-    **kwargs: Any,
+    model_id: str,
+    x_train_sample_id: str,
+    ctx: Context,
+    _user_id: str = "",
+    _conversation_id: str | None = None,
+    max_samples: int = 200,
 ) -> dict[str, Any]:
-    """Compute SHAP values for the champion model. Returns signed-URL plot."""
+    """Compute SHAP values for the champion model and return a signed-URL summary plot.
+
+    Args:
+        model_id: Artifact UUID of the champion joblib model from run_parallel_bake_off.
+        x_train_sample_id: Artifact UUID of the X_train parquet sample from run_parallel_bake_off.
+        max_samples: Number of samples to explain (default 200).
+    """
     import shap
 
-    user_id, conversation_id = _pop_context(kwargs)
+    user_id, conversation_id = _require_context(_user_id, _conversation_id)
 
     await ctx.info(f"Loading champion model {model_id}")
     model_path, artifact = _load_model_artifact(user_id, model_id)
@@ -144,11 +151,19 @@ async def calculate_shap_values(
 
 @mcp.tool
 async def generate_feature_importance_plot(
-    model_id: str, ctx: Context, top_k: int = 15,
-    **kwargs: Any,
+    model_id: str,
+    ctx: Context,
+    _user_id: str = "",
+    _conversation_id: str | None = None,
+    top_k: int = 15,
 ) -> dict[str, Any]:
-    """Native feature_importances_ bar chart for tree models."""
-    user_id, conversation_id = _pop_context(kwargs)
+    """Native feature_importances_ bar chart for tree-based models.
+
+    Args:
+        model_id: Artifact UUID of the champion joblib model from run_parallel_bake_off.
+        top_k: Number of top features to display (default 15).
+    """
+    user_id, conversation_id = _require_context(_user_id, _conversation_id)
     await ctx.info(f"Loading {model_id}")
     model_path, artifact = _load_model_artifact(user_id, model_id)
     pipeline = artifact["pipeline"]
