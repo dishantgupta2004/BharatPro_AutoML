@@ -17,7 +17,7 @@ from typing import Any
 
 from core.config import settings
 from core.logger import get_logger
-from supabase_client import sb
+from core.supabase_client import sb
 
 log = get_logger("storage")
 

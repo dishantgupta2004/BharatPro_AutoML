@@ -27,12 +27,10 @@ log = logging.getLogger(SERVICE_NAME)
 mcp = FastMCP(name=SERVICE_NAME)
 
 
-def _pop_user(kwargs: dict[str, Any]) -> str:
-    uid = kwargs.pop("_user_id", None)
-    kwargs.pop("_conversation_id", None)
-    if not uid:
+def _pop_user(user_id: str | None) -> str:
+    if not user_id:
         raise PermissionError("Missing _user_id in tool call context")
-    return uid
+    return user_id
 
 
 def _load_df(path: Path) -> pd.DataFrame:
@@ -100,9 +98,8 @@ def _build_schema(rules: dict[str, dict[str, Any]]) -> pa.DataFrameSchema:
 
 # ── MCP tools ────────────────────────────────────────────────────
 @mcp.tool
-def list_uploaded_files(**kwargs: Any) -> dict[str, Any]:
+def list_uploaded_files(user_id: str):
     """List all datasets the user has uploaded."""
-    user_id = _pop_user(kwargs)
     rows = list_datasets(user_id)
     items = [
         {
@@ -119,14 +116,14 @@ def list_uploaded_files(**kwargs: Any) -> dict[str, Any]:
 
 
 @mcp.tool
-def ingest_dataset(file_path: str, n_preview_rows: int = 5, **kwargs: Any) -> dict[str, Any]:
+def ingest_dataset(file_path: str, user_id: str, n_preview_rows: int = 5) -> dict[str, Any]:
     """Load a dataset, return shape, dtypes, and head preview.
 
     Args:
         file_path: Filename or UUID of an uploaded dataset.
+        user_id: The ID of the user uploading the dataset.
         n_preview_rows: Head rows to return (capped at 100).
     """
-    user_id = _pop_user(kwargs)
     path = resolve_dataset_for_user(user_id, file_path)
     df = _load_df(path)
     n = max(1, min(int(n_preview_rows), 100))
@@ -148,12 +145,11 @@ def ingest_dataset(file_path: str, n_preview_rows: int = 5, **kwargs: Any) -> di
 @mcp.tool
 def validate_schema_with_pandera(
     file_path: str,
+    user_id: str,
     expected_columns: list[str] | None = None,
-    strict_dtypes: bool = False,
-    **kwargs: Any,
+    strict_dtypes: bool = False
 ) -> dict[str, Any]:
     """Validate a dataset against an auto-inferred pandera DataFrameSchema."""
-    user_id = _pop_user(kwargs)
     path = resolve_dataset_for_user(user_id, file_path)
     df = _load_df(path)
 

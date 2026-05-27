@@ -1,12 +1,13 @@
 "use client";
 
 import { Bot, Loader2, User } from "lucide-react";
+import { useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { API_BASE_URL } from "@/lib/api";
 import type { UiMessage } from "@/lib/types";
 
+import SignedImage from "./SignedImage";
 import ToolCallCard from "./ToolCallCard";
 import ToolProgressBanner from "./ToolProgressBanner";
 
@@ -14,13 +15,36 @@ interface Props {
   message: UiMessage;
 }
 
-function rewriteUrl(url: string): string {
-  if (url.startsWith("/static/")) return `${API_BASE_URL}${url}`;
-  return url;
+/** Walk tool results, build a map: signed-url → artifact_id, so SignedImage
+ * can re-mint the URL on 403 without us needing to plumb ids through markdown. */
+function buildArtifactUrlIndex(message: UiMessage): Map<string, string> {
+  const map = new Map<string, string>();
+  const visit = (val: unknown): void => {
+    if (val == null) return;
+    if (Array.isArray(val)) {
+      val.forEach(visit);
+      return;
+    }
+    if (typeof val !== "object") return;
+    const obj = val as Record<string, unknown>;
+    const id = typeof obj.artifact_id === "string" ? obj.artifact_id : null;
+    if (id) {
+      for (const key of ["plot_url", "report_url", "notebook_url", "pdf_url", "download_url", "model_url"]) {
+        const u = obj[key];
+        if (typeof u === "string") map.set(u, id);
+      }
+    }
+    for (const v of Object.values(obj)) {
+      if (v && typeof v === "object") visit(v);
+    }
+  };
+  (message.toolCalls ?? []).forEach((tc) => visit(tc.result));
+  return map;
 }
 
 export default function MessageBubble({ message }: Props) {
   const isUser = message.role === "user";
+  const urlIndex = useMemo(() => buildArtifactUrlIndex(message), [message]);
 
   return (
     <div className={`flex gap-3 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
@@ -63,7 +87,17 @@ export default function MessageBubble({ message }: Props) {
             <div className="prose-dark">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
-                urlTransform={rewriteUrl}
+                components={{
+                  img: ({ src, alt }) => (
+                    <SignedImage
+                      src={typeof src === "string" ? src : ""}
+                      alt={alt}
+                      artifactId={
+                        typeof src === "string" ? urlIndex.get(src) ?? null : null
+                      }
+                    />
+                  ),
+                }}
               >
                 {message.content}
               </ReactMarkdown>

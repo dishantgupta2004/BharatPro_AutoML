@@ -39,3 +39,6 @@ tests/*
 
 
 logs/*
+
+.claude/
+.mcp.json

@@ -1,5 +1,5 @@
 import type { StreamEvent } from "./types";
-import { chatStreamUrl } from "./api";
+import { authedFetch, chatStreamUrl } from "./api";
 
 export interface ChatStreamPayload {
   query: string;
@@ -14,9 +14,11 @@ export async function* openChatStream(
   payload: ChatStreamPayload,
   signal?: AbortSignal,
 ): AsyncGenerator<StreamEvent, void, unknown> {
-  const res = await fetch(chatStreamUrl(), {
+  // EventSource can't send headers; use fetch + ReadableStream so we can
+  // attach Authorization: Bearer <jwt> via authedFetch.
+  const res = await authedFetch(chatStreamUrl(), {
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    headers: { Accept: "text/event-stream" },
     body: JSON.stringify(payload),
     signal,
   });
@@ -53,8 +55,7 @@ export async function* openChatStream(
 
         const dataStr = dataLines.join("\n");
         try {
-          const evt = JSON.parse(dataStr) as StreamEvent;
-          yield evt;
+          yield JSON.parse(dataStr) as StreamEvent;
         } catch (err) {
           console.warn("Failed to parse SSE frame", err, dataStr);
         }
