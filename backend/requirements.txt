@@ -24,3 +24,4 @@ httpx
 pillow
 tqdm
 pandera
+reportlab
