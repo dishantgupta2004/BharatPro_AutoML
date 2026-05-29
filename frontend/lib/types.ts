@@ -69,6 +69,7 @@ export type StreamEvent =
   | {
       type: "tool_start";
       name: string;
+      label?: string;
       service?: string;
       arguments: Record<string, unknown>;
     }
@@ -76,6 +77,7 @@ export type StreamEvent =
   | {
       type: "tool_end";
       name: string;
+      label?: string;
       service?: string;
       result: string;
       error: string | null;
@@ -90,6 +92,7 @@ export type StreamEvent =
 
 export interface ActiveToolBadge {
   name: string;
+  label: string;
   service?: string;
   message: string;
   percentage: number;

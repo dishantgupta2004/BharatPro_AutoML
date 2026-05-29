@@ -4,14 +4,18 @@ import asyncio
 import contextlib
 import json
 import re
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
 import pandas as pd
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from auth import AuthUser, get_current_user
 from core.config import settings
@@ -37,6 +41,8 @@ from schemas.conversation import (
 )
 
 log = get_logger("api")
+
+limiter = Limiter(key_func=get_remote_address)
 
 SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -79,13 +85,36 @@ async def lifespan(app: FastAPI):
             except Exception as exc:
                 log.warning("refresh_all failed: %s", exc)
 
+    async def tmp_cleaner():
+        """Delete user tmp files older than 7 days to prevent disk exhaustion."""
+        max_age_seconds = 7 * 24 * 3600
+        while True:
+            await asyncio.sleep(3600.0)
+            try:
+                tmp_root = settings.tmp_path
+                if tmp_root.exists():
+                    now = time.time()
+                    removed = 0
+                    for path in tmp_root.rglob("*"):
+                        if path.is_file() and (now - path.stat().st_mtime) > max_age_seconds:
+                            path.unlink(missing_ok=True)
+                            removed += 1
+                    if removed:
+                        log.info("tmp_cleaner: removed %d stale files", removed)
+            except Exception as exc:
+                log.warning("tmp_cleaner error: %s", exc)
+
     refresh_task = asyncio.create_task(refresher())
+    cleaner_task = asyncio.create_task(tmp_cleaner())
     try:
         yield
     finally:
         refresh_task.cancel()
+        cleaner_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await refresh_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await cleaner_task
         await pool.shutdown()
 
 
@@ -95,6 +124,9 @@ app = FastAPI(
     description="AI-native AutoML platform by NSK AI Labs. In-process MCP backend with Supabase auth + storage.",
     lifespan=lifespan,
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -287,7 +319,9 @@ def delete_conversation_endpoint(
 
 # ── Chat (SSE) ──────────────────────────────────────────────────────
 @app.post("/api/chat")
+@limiter.limit("20/minute")
 async def chat(
+    request: Request,
     req: ChatRequest,
     user: Annotated[AuthUser, Depends(get_current_user)],
 ) -> StreamingResponse:

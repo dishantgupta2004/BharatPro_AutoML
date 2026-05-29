@@ -66,17 +66,11 @@ export default function ConversationSidebar({
       {/* Brand + user */}
       <div className="px-4 pt-4 pb-3">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-accent-500 to-accent-700 shadow-glow">
-            <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 text-white">
-              <path
-                d="M4 7l8-4 8 4-8 4-8-4zm0 5l8 4 8-4m-16 5l8 4 8-4"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </div>
+          <img
+            src="/nsk_logo.png"
+            alt="NSK AI Labs"
+            className="h-8 w-8 rounded-lg object-contain"
+          />
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold text-fg-50">
               BharatPro AutoML

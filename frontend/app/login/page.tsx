@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   Cpu,
   FileText,
-  Layers,
   Loader2,
   Lock,
   Mail,
@@ -110,9 +109,11 @@ export default function LoginPage() {
         {/* Top brand */}
         <div className="relative z-10">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-accent-500 to-accent-700 shadow-glow">
-              <Layers className="h-5 w-5 text-white" />
-            </div>
+            <img
+              src="/nsk_logo.png"
+              alt="NSK AI Labs"
+              className="h-10 w-10 rounded-xl object-contain"
+            />
             <div>
               <div className="text-sm font-bold tracking-tight text-fg-50">NSK AI Labs</div>
               <div className="text-[10px] uppercase tracking-widest text-fg-300">
@@ -197,9 +198,11 @@ export default function LoginPage() {
         <div className="w-full max-w-sm">
           {/* Mobile brand (shown only on small screens) */}
           <div className="mb-8 flex items-center gap-2.5 lg:hidden">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-accent-500 to-accent-700 shadow-glow">
-              <Layers className="h-4 w-4 text-white" />
-            </div>
+            <img
+              src="/nsk_logo.png"
+              alt="NSK AI Labs"
+              className="h-9 w-9 rounded-xl object-contain"
+            />
             <div>
               <div className="text-sm font-bold text-fg-50">NSK AI Labs</div>
               <div className="text-[10px] uppercase tracking-wider text-fg-300">BharatPro AutoML</div>

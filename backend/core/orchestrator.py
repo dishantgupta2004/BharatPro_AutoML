@@ -21,6 +21,21 @@ from core.mcp_pool import MCPClientPool
 
 log = get_logger("orchestrator")
 
+TOOL_LABELS: dict[str, str] = {
+    "ingest_dataset":                   "Loading dataset",
+    "validate_schema_with_pandera":     "Validating data quality",
+    "run_feature_engineering":          "Engineering features",
+    "run_full_eda":                     "Analyzing your data",
+    "run_parallel_bake_off":            "Training candidate models",
+    "trigger_hyperparameter_sweep":     "Optimizing hyperparameters",
+    "calculate_shap_values":            "Computing explainability",
+    "generate_feature_importance_plot": "Ranking feature importance",
+    "generate_jupyter_notebook":        "Creating notebook",
+    "compile_pdf_report":               "Preparing report",
+    "bundle_project_export":            "Bundling project",
+    "list_uploaded_files":              "Scanning your datasets",
+}
+
 SYSTEM_PROMPT = """You are **BharatPro AutoML Copilot** by NSK AI Labs, an AI assistant for \
 students, researchers, and data engineers exploring datasets and training ML models.
 
@@ -188,6 +203,7 @@ async def stream_chat(
                             yield _sse({
                                 "type": "tool_start",
                                 "name": slot["name"],
+                                "label": TOOL_LABELS.get(slot["name"], "Processing"),
                                 "service": owner,
                                 "arguments": partial_args,
                             })
@@ -256,7 +272,9 @@ async def stream_chat(
                 result_str = json.dumps(payload, default=str)
 
                 yield _sse({
-                    "type": "tool_end", "name": name, "service": owner,
+                    "type": "tool_end", "name": name,
+                    "label": TOOL_LABELS.get(name, "Done"),
+                    "service": owner,
                     "result": result_str, "error": error,
                     "duration_ms": duration_ms,
                 })

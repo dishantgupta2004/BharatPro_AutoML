@@ -7,12 +7,12 @@ import {
   ChevronRight,
   Download,
   ExternalLink,
-  Wrench,
 } from "lucide-react";
 
 import { useState } from "react";
 
 import { API_BASE_URL, downloadUrl, staticOutputUrl } from "@/lib/api";
+import { getToolDoneLabel } from "@/lib/toolEventMap";
 import type { ToolCallRecord } from "@/lib/types";
 
 interface Props {
@@ -59,7 +59,6 @@ function collectArtifacts(value: unknown, acc: Artifact[] = []): Artifact[] {
     }
   }
 
-  // Legacy filename-only fields
   for (const key of ["file", "model_file", "script_file", "plot_file", "report_file", "notebook_file", "pdf_file"]) {
     const fn = obj[key];
     if (typeof fn === "string") {
@@ -75,6 +74,7 @@ export default function ToolCallCard({ call, index }: Props) {
   const [open, setOpen] = useState(false);
   const artifacts = collectArtifacts(call.result);
   const succeeded = !call.error;
+  const friendlyLabel = getToolDoneLabel(call.name);
 
   return (
     <div className="rounded-lg border border-canvas-500 bg-canvas-900/60 transition hover:border-canvas-400">
@@ -83,37 +83,36 @@ export default function ToolCallCard({ call, index }: Props) {
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px]"
       >
         {open ? (
-          <ChevronDown className="h-3 w-3 text-fg-300" />
+          <ChevronDown className="h-3 w-3 shrink-0 text-fg-300" />
         ) : (
-          <ChevronRight className="h-3 w-3 text-fg-300" />
+          <ChevronRight className="h-3 w-3 shrink-0 text-fg-300" />
         )}
-        <Wrench className="h-3 w-3 text-accent-400" />
-        <span className="font-mono font-semibold text-fg-50">
-          #{index + 1} {call.name}
+        <span className="flex-1 truncate font-medium text-fg-100">
+          {friendlyLabel}
         </span>
-        {call.service && (
-          <span className="rounded bg-canvas-700 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-fg-300">
-            {call.service}
-          </span>
-        )}
-        <span className="text-fg-300">· {call.duration_ms} ms</span>
-        <span className="ml-auto flex items-center gap-1">
+        <span className="font-mono text-[10px] text-fg-400">{call.duration_ms} ms</span>
+        <span className="flex items-center gap-1">
           {succeeded ? (
-            <>
-              <CheckCircle2 className="h-3 w-3 text-status-online" />
-              <span className="text-status-online">ok</span>
-            </>
+            <CheckCircle2 className="h-3 w-3 text-status-online" />
           ) : (
-            <>
-              <AlertCircle className="h-3 w-3 text-status-error" />
-              <span className="text-status-error">error</span>
-            </>
+            <AlertCircle className="h-3 w-3 text-status-error" />
           )}
         </span>
       </button>
 
       {open && (
         <div className="space-y-2 border-t border-canvas-500 px-3 py-2 text-[11px]">
+          {/* Technical details — power user section */}
+          <div className="flex items-center gap-2 rounded-md bg-canvas-900/80 px-2 py-1">
+            <span className="font-mono text-[10px] text-fg-400">#{index + 1}</span>
+            <code className="flex-1 truncate font-mono text-[10px] text-fg-300">{call.name}</code>
+            {call.service && (
+              <span className="rounded bg-canvas-700 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-fg-400">
+                {call.service}
+              </span>
+            )}
+          </div>
+
           {Object.keys(call.arguments || {}).length > 0 && (
             <div>
               <div className="mb-1 font-semibold text-fg-200">Arguments</div>

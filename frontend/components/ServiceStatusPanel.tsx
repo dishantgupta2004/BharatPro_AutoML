@@ -5,11 +5,11 @@ import { useServiceNetwork } from "@/hooks/useServiceNetwork";
 import type { ServiceState } from "@/lib/types";
 
 const SERVICE_LABEL: Record<string, string> = {
-  "mcp-data": "Data & Schema",
-  "mcp-eda": "EDA & Charts",
-  "mcp-modeling": "Modeling",
-  "mcp-explain": "Explainability",
-  "mcp-export": "Export",
+  "mcp-data": "Data Engine",
+  "mcp-eda": "Analytics Engine",
+  "mcp-modeling": "Training Engine",
+  "mcp-explain": "Explainability Engine",
+  "mcp-export": "Export Engine",
 };
 
 function StatusDot({ status }: { status: ServiceState["status"] }) {
@@ -45,7 +45,7 @@ export default function ServiceStatusPanel() {
         <div className="flex items-center gap-2">
           <Activity className="h-3.5 w-3.5 text-accent-400" />
           <span className="text-[10px] font-semibold uppercase tracking-wider text-fg-200">
-            MCP Network
+            AI Engines
           </span>
         </div>
         <button
@@ -81,7 +81,7 @@ export default function ServiceStatusPanel() {
               {SERVICE_LABEL[s.name] || s.name}
             </span>
             <span className="font-mono text-[10px] text-fg-300">
-              {s.url.match(/:(\d+)/)?.[1] ?? ""}
+              {s.tools.length > 0 ? `${s.tools.length} tools` : ""}
             </span>
           </li>
         ))}

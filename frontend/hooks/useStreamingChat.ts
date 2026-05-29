@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 
 import { openChatStream } from "@/lib/streamingClient";
+import { getToolLabel } from "@/lib/toolEventMap";
 import type {
   ActiveToolBadge,
   ChatMessage,
@@ -204,10 +205,12 @@ export function useStreamingChat(): UseStreamingChatResult {
               break;
             }
             case "tool_start": {
+              const resolvedLabel = evt.label ?? getToolLabel(evt.name);
               const badge: ActiveToolBadge = {
                 name: evt.name,
+                label: resolvedLabel,
                 service: evt.service,
-                message: `Calling ${evt.name}…`,
+                message: `${resolvedLabel}…`,
                 percentage: 0,
                 started_at: Date.now(),
               };
