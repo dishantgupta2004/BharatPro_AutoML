@@ -1,0 +1,119 @@
+\chapter{System Requirements}
+\label{ch:requirements}
+
+This chapter enumerates the functional and non-functional requirements
+that were used to steer the design of \projname. Each requirement is
+tagged with an identifier of the form \code{FR-}$n$ or \code{NFR-}$n$
+so that later chapters can refer to it explicitly.
+
+\section{Functional Requirements}
+\label{sec:fr}
+
+Table~\ref{tab:fr} lists the functional requirements. Each requirement
+maps to one or more implemented modules and is verified in
+Chapter~\ref{ch:experiments}.
+
+\begin{table}[H]
+\centering
+\caption{Functional requirements and their implementation locations.}
+\label{tab:fr}
+\small
+\begin{tabularx}{\linewidth}{@{}lXl@{}}
+\toprule
+\textbf{ID} & \textbf{Requirement} & \textbf{Implemented in} \\
+\midrule
+FR-01 & Accept CSV, TSV, and Parquet uploads and store them locally. & \file{core/workspace.py}, \file{app/streamlit\_app.py} \\
+FR-02 & List all uploaded datasets in reverse-chronological order. & \file{core/workspace.py::list\_datasets} \\
+FR-03 & Ingest a dataset and return shape, dtypes, and a preview. & \file{mcp\_servers/data.py::ingest\_dataset} \\
+FR-04 & Validate a dataset against an auto-inferred pandera schema. & \file{mcp\_servers/data.py::validate\_schema\_with\_pandera} \\
+FR-05 & Run a full EDA and produce three named plots. & \file{mcp\_servers/eda.py::run\_full\_eda} \\
+FR-06 & Render a standalone correlation matrix with Pearson, Spearman, or Kendall. & \file{mcp\_servers/eda.py::render\_correlation\_matrix} \\
+FR-07 & Train four candidate models in parallel with $k$-fold CV. & \file{mcp\_servers/modeling.py::run\_parallel\_bake\_off} \\
+FR-08 & Run a time-bounded Optuna TPE hyperparameter sweep. & \file{mcp\_servers/modeling.py::trigger\_hyperparameter\_sweep} \\
+FR-09 & Compute global SHAP feature importances for the champion model. & \file{mcp\_servers/explain.py::calculate\_shap\_values} \\
+FR-10 & Produce a native feature-importance bar chart for tree models. & \file{mcp\_servers/explain.py::generate\_feature\_importance\_plot} \\
+FR-11 & Emit a runnable Jupyter notebook that reproduces the pipeline. & \file{mcp\_servers/export.py::generate\_jupyter\_notebook} \\
+FR-12 & Compile a PDF report of the champion, leaderboard, and metadata. & \file{mcp\_servers/export.py::compile\_pdf\_report} \\
+FR-13 & Expose a unified tool catalog to the LLM and route calls to the right server. & \file{orchestrator/pool.py::MCPClientPool} \\
+FR-14 & Stream tool progress and tool results back to the user in real time. & \file{orchestrator/loop.py::stream\_chat} \\
+FR-15 & Preview and download every generated artefact. & \file{app/streamlit\_app.py} (\textit{Artifacts} tab) \\
+FR-16 & Expose the orchestrator as a Python API for scripted use. & \file{orchestrator/\_\_init\_\_.py} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Non-Functional Requirements}
+\label{sec:nfr}
+
+Table~\ref{tab:nfr} lists the non-functional requirements.
+
+\begin{table}[H]
+\centering
+\caption{Non-functional requirements.}
+\label{tab:nfr}
+\small
+\begin{tabularx}{\linewidth}{@{}lXX@{}}
+\toprule
+\textbf{ID} & \textbf{Requirement} & \textbf{Realisation} \\
+\midrule
+NFR-01 & Single-machine deployment; no cloud dependency for storage. & Local FS registry (\file{core/workspace.py}). \\
+NFR-02 & No authentication or user model. & Removed in the migration; enforced by absence of any auth module. \\
+NFR-03 & Fully open dependency stack. & All deps in \file{requirements.txt} are OSS. \\
+NFR-04 & Deterministic numerical results under fixed \code{random\_state}. & \code{random\_state} arguments plumbed through all training tools. \\
+NFR-05 & Progress feedback within 2\,s of tool invocation. & Progress bridge in \file{orchestrator/loop.py} + \code{ctx.report\_progress}. \\
+NFR-06 & Extensible tool catalog. & Register-decorator MCP tools; no orchestrator changes for new tools. \\
+NFR-07 & Reproducible artefacts. & UUID + kind + metadata in \file{data/artifacts/\_index.json}. \\
+NFR-08 & Streamlit UI free of business logic. & UI only calls \code{orchestrator.stream\_chat} and \file{core/workspace.py}. \\
+NFR-09 & Configurable data directory. & \code{DATA\_DIR} env variable via \code{pydantic-settings}. \\
+NFR-10 & Upload size cap to prevent OOM. & \code{MAX\_UPLOAD\_MB} setting; enforced client-side and in tools. \\
+NFR-11 & Reasonable page load / responsiveness on a laptop. & Streamlit + in-process MCP eliminates network round-trips. \\
+NFR-12 & Ability to run without an LLM key (tool catalog still visible). & Streamlit degrades gracefully when \code{GROQ\_API\_KEY} is missing. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Environmental Requirements}
+\label{sec:env-req}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{Operating system:} Any OS with Python 3.11+; the
+        development environment was Windows 11 with PowerShell, but
+        no Windows-only APIs are used.
+  \item \textbf{Python:} 3.11 or newer. Older versions lack the
+        \code{X | Y} union syntax used throughout the codebase.
+  \item \textbf{Memory:} 8~GB RAM is comfortable for datasets under
+        the default 200~MB upload cap; SHAP on wide datasets can push
+        this higher.
+  \item \textbf{Network:} Outbound HTTPS to \code{api.groq.com} is
+        required for the chat feature; no inbound network is used.
+  \item \textbf{Browser:} Any modern browser for the Streamlit UI at
+        \code{localhost:8501}.
+\end{itemize}
+
+\section{Traceability}
+\label{sec:trace}
+
+Table~\ref{tab:trace} traces each requirement to the chapter in which
+its implementation is discussed. Chapter~\ref{ch:results} evaluates
+the extent to which each requirement is satisfied.
+
+\begin{table}[H]
+\centering
+\caption{Requirement--chapter traceability.}
+\label{tab:trace}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Requirement} & \textbf{Discussed in} & \textbf{Verified in} \\
+\midrule
+FR-01, FR-02 & Ch.~\ref{ch:design} & Ch.~\ref{ch:experiments} \\
+FR-03, FR-04 & Ch.~\ref{ch:pipeline}, Ch.~\ref{ch:impl} & Ch.~\ref{ch:experiments} \\
+FR-05, FR-06 & Ch.~\ref{ch:pipeline} & Ch.~\ref{ch:results} \\
+FR-07, FR-08 & Ch.~\ref{ch:pipeline}, Ch.~\ref{ch:impl} & Ch.~\ref{ch:results} \\
+FR-09, FR-10 & Ch.~\ref{ch:pipeline} & Ch.~\ref{ch:results} \\
+FR-11, FR-12 & Ch.~\ref{ch:pipeline} & Ch.~\ref{ch:demo} \\
+FR-13, FR-14 & Ch.~\ref{ch:mcp} & Ch.~\ref{ch:results} \\
+FR-15, FR-16 & Ch.~\ref{ch:design}, App.~\ref{app:api} & Ch.~\ref{ch:demo} \\
+NFR-01--NFR-12 & Ch.~\ref{ch:arch}, Ch.~\ref{ch:design} & Ch.~\ref{ch:results}, Ch.~\ref{ch:limitations} \\
+\bottomrule
+\end{tabular}
+\end{table}

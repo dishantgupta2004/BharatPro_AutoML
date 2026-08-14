@@ -8,14 +8,6 @@ env/
 *.egg-info/
 .pytest_cache/
 
-# Node
-node_modules/
-.next/
-out/
-build/
-.npm/
-.pnpm-store/
-
 # OS
 .DS_Store
 Thumbs.db
@@ -29,14 +21,16 @@ Thumbs.db
 .env.local
 .env.production
 
-# Data & outputs (keep folders via .gitkeep)
-backend/uploads/*
-!backend/uploads/.gitkeep
-backend/outputs/*
-!backend/outputs/.gitkeep
+# Data & artifacts (keep folders via .gitkeep)
+data/uploads/*
+!data/uploads/.gitkeep
+data/artifacts/*
+!data/artifacts/.gitkeep
+data/tmp/*
+!data/tmp/.gitkeep
 
-tests/*
-
+# Streamlit
+.streamlit/secrets.toml
 
 logs/*
 

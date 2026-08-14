@@ -1,0 +1,250 @@
+\chapter{System Architecture}
+\label{ch:arch}
+
+This chapter presents the high-level architecture of \projname{} and
+the flow of data and control between its components. Every diagram in
+this chapter reflects a component that is actually present in the
+repository \file{automl-mcp-platform}. Implementation-level detail is
+deferred to Chapters~\ref{ch:design}--\ref{ch:impl}.
+
+\section{Architectural Style}
+\label{sec:arch-style}
+
+\projname{} follows a \emph{layered service-oriented} architecture
+where each layer has a single responsibility and no upward
+dependencies:
+
+\begin{enumerate}[leftmargin=1.4em]
+  \item \textbf{Presentation layer.} A Streamlit application
+        (\file{app/streamlit\_app.py}) responsible for uploads, chat
+        rendering, artefact previewing, and tool inspection.
+  \item \textbf{Orchestration layer.} Two modules: an MCP client pool
+        (\file{orchestrator/pool.py}) and an LLM tool-calling loop
+        (\file{orchestrator/loop.py}).
+  \item \textbf{Service layer.} Five FastMCP servers under
+        \file{mcp\_servers/} implementing the eleven tools.
+  \item \textbf{Core layer.} A settings module
+        (\file{core/config.py}), a logger (\file{core/logger.py}),
+        and a workspace / registry module
+        (\file{core/workspace.py}) that persists uploads and
+        artefacts.
+  \item \textbf{Storage layer.} The filesystem, rooted at the
+        configured \code{DATA\_DIR} (default \file{./data}).
+\end{enumerate}
+
+\section{High-Level Architecture Diagram}
+\label{sec:high-level}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=0.65cm and 0.9cm, font=\small\sffamily]
+
+  \node[al-node, minimum width=11cm]                   (ui)   {Streamlit UI  \\ (\file{app/streamlit\_app.py})};
+
+  \node[al-node, below=of ui, minimum width=11cm, fill=white]
+                                                       (orch) {Orchestrator \\ (pool + Groq tool-calling loop)};
+
+  \node[al-svc, below=1cm of orch, xshift=-4.5cm]      (s1)   {mcp-data};
+  \node[al-svc, right=of s1]                           (s2)   {mcp-eda};
+  \node[al-svc, right=of s2]                           (s3)   {mcp-modeling};
+  \node[al-svc, right=of s3]                           (s4)   {mcp-explain};
+  \node[al-svc, right=of s4]                           (s5)   {mcp-export};
+
+  \node[al-node, below=1.4cm of s3, minimum width=8cm, fill=alSoft]
+                                                       (core) {core/ (config, logger, workspace)};
+
+  \node[al-store, below=of core]                       (fs)   {data/ \\ uploads · artifacts · tmp};
+
+  \node[al-node, right=1.4cm of orch, fill=alAccent!15]
+                                                       (llm)  {Groq API \\ Llama\,3.3 70B};
+
+  \draw[al-flow] (ui)   -- (orch);
+  \draw[al-flow] (orch) -- (s1);
+  \draw[al-flow] (orch) -- (s2);
+  \draw[al-flow] (orch) -- (s3);
+  \draw[al-flow] (orch) -- (s4);
+  \draw[al-flow] (orch) -- (s5);
+  \draw[al-flow] (s1) -- (core);
+  \draw[al-flow] (s2) -- (core);
+  \draw[al-flow] (s3) -- (core);
+  \draw[al-flow] (s4) -- (core);
+  \draw[al-flow] (s5) -- (core);
+  \draw[al-flow] (core) -- (fs);
+  \draw[al-flow-dashed, <->] (orch.east) -- (llm.west);
+
+\end{tikzpicture}
+\caption{High-level architecture of \projname. Solid arrows carry
+data or control in-process; the dashed arrow to the Groq API is the
+only network dependency.}
+\label{fig:high-level}
+\end{figure}
+
+\section{Runtime Model}
+\label{sec:runtime}
+
+The Streamlit script is the process entry point. It creates a
+long-lived asyncio event loop in a daemon thread and constructs a
+single \code{MCPClientPool}. The pool then registers the five
+FastMCP servers and connects to each via \code{FastMCPTransport}.
+Because the transport is in-process, no ports are opened and no
+sockets are created --- the client's \code{call\_tool} coroutine
+dispatches directly to the server's Python function via FastMCP's
+internal message routing.
+
+The Groq API is reached through the official \code{groq} Python
+client, which internally uses \code{httpx}. The client is
+instantiated per user turn (there is no persistent chat completion
+stream). Each chat turn creates a fresh chat completions request in
+streaming mode; the orchestrator consumes tokens and tool-call
+deltas incrementally and dispatches tool invocations on the shared
+event loop.
+
+\section{Component Responsibilities}
+\label{sec:responsibilities}
+
+Table~\ref{tab:responsibilities} maps each component to its
+responsibilities.
+
+\begin{table}[H]
+\centering
+\caption{Components and responsibilities.}
+\label{tab:responsibilities}
+\small
+\begin{tabularx}{\linewidth}{@{}lX@{}}
+\toprule
+\textbf{Component} & \textbf{Responsibilities} \\
+\midrule
+\file{core/config.py} & Loads settings from \code{.env}; exposes typed
+attributes (\code{GROQ\_API\_KEY}, \code{GROQ\_MODEL},
+\code{DATA\_DIR}, \code{MAX\_TOOL\_ITERATIONS}, \code{MAX\_UPLOAD\_MB});
+computes derived paths. \\
+\file{core/logger.py} & Named-logger factory writing to stderr. \\
+\file{core/workspace.py} & Dataset save/list/resolve; artefact save;
+artefact registry serialisation to \file{data/artifacts/\_index.json}. \\
+\file{mcp\_servers/data.py} & Ingestion, preview, pandera-based schema
+validation. \\
+\file{mcp\_servers/eda.py} & Full EDA tool, standalone correlation
+matrix tool, EDA prompt. \\
+\file{mcp\_servers/modeling.py} & Parallel bake-off, Optuna sweep. \\
+\file{mcp\_servers/explain.py} & SHAP calculation, native feature
+importances. \\
+\file{mcp\_servers/export.py} & Jupyter notebook generation, PDF
+report generation. \\
+\file{orchestrator/pool.py} & Client pool, service state, unified tool
+schema, in-process routing, observer/SSE stream. \\
+\file{orchestrator/loop.py} & Groq streaming loop, tool argument
+accumulation, progress bridging, event yielding. \\
+\file{app/streamlit\_app.py} & Layout, upload widget, chat, artefact
+preview, tool catalog viewer, background loop management. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Data Flow}
+\label{sec:data-flow}
+
+Figure~\ref{fig:data-flow} traces the flow of user data through the
+system.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=0.55cm and 0.75cm, font=\small\sffamily]
+  \node[al-node, minimum width=3cm] (u) {User};
+  \node[al-node, right=of u, minimum width=3.2cm] (up) {Sidebar \\ upload widget};
+  \node[al-node, right=of up, minimum width=3.6cm] (ws) {\code{workspace.} \\ \code{save\_uploaded\_dataset}};
+  \node[al-store, right=of ws] (fs) {data/uploads};
+
+  \node[al-node, below=1cm of u, minimum width=3cm] (u2) {Chat input};
+  \node[al-node, right=of u2, minimum width=3.2cm] (ol) {Orchestrator \\ \code{stream\_chat}};
+  \node[al-node, right=of ol, minimum width=3.6cm] (mc) {\code{MCPClientPool.} \\ \code{call\_tool}};
+  \node[al-node, right=of mc, minimum width=3cm] (srv) {MCP server tool};
+  \node[al-store, below=of mc] (fs2) {data/artifacts};
+
+  \draw[al-flow] (u)   -- (up);
+  \draw[al-flow] (up)  -- (ws);
+  \draw[al-flow] (ws)  -- (fs);
+  \draw[al-flow] (u2)  -- (ol);
+  \draw[al-flow] (ol)  -- (mc);
+  \draw[al-flow] (mc)  -- (srv);
+  \draw[al-flow] (srv.south) |- (fs2.east);
+  \draw[al-flow, <-] (ol.south) |- (fs2.west) node[midway, above=1pt] {\tiny artefact preview};
+
+\end{tikzpicture}
+\caption{Data flow for uploads (top) and tool-invoked artefact
+generation (bottom).}
+\label{fig:data-flow}
+\end{figure}
+
+\section{Orchestration Flow}
+\label{sec:orchestration-flow}
+
+Figure~\ref{fig:orch-flow} sketches a single chat turn. The
+orchestrator repeatedly calls the LLM, streams tokens back to the UI,
+detects any \code{tool\_calls}, dispatches them through the pool,
+appends the tool result to the message history, and re-invokes the
+LLM until it produces a final message with no further tool calls or
+the iteration limit is reached.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=0.55cm and 1cm, font=\small\sffamily]
+  \node[al-node, minimum width=2.8cm]                    (u)  {User turn};
+  \node[al-node, below=of u, minimum width=2.8cm]        (h)  {History};
+  \node[al-node, right=of u, minimum width=3.4cm]        (llm){LLM streaming call};
+  \node[al-node, right=of llm, minimum width=3cm]        (dec){Tool calls?};
+  \node[al-node, above=of dec, minimum width=3cm,
+        fill=alAccent!15]                                 (done){yield done};
+  \node[al-node, right=of dec, minimum width=3.2cm]      (dis){Dispatch via pool};
+  \node[al-node, below=of dis, minimum width=3.2cm]      (rec){Append tool result};
+
+  \draw[al-flow] (u)  -- (llm);
+  \draw[al-flow] (h)  -- (llm);
+  \draw[al-flow] (llm)-- (dec);
+  \draw[al-flow] (dec)-- node[above,font=\tiny]{no} (done);
+  \draw[al-flow] (dec)-- node[above,font=\tiny]{yes} (dis);
+  \draw[al-flow] (dis)-- (rec);
+  \draw[al-flow] (rec.west) -| (llm.south);
+\end{tikzpicture}
+\caption{Orchestration loop for a single user turn.}
+\label{fig:orch-flow}
+\end{figure}
+
+\section{Artefact Flow}
+\label{sec:artefact-flow}
+
+Every generated file follows the same lifecycle:
+\begin{enumerate}[leftmargin=1.4em]
+  \item A tool writes the file into its private scratch directory
+        under \file{data/tmp/<subdir>/}.
+  \item The tool calls \code{save\_artifact(local\_path, kind,
+        metadata)} in \file{core/workspace.py}.
+  \item \code{save\_artifact} \emph{moves} the file to
+        \file{data/artifacts/<category>/<uuid>\_\_<name>}, assigns a
+        UUID, computes the MIME type, and appends a record to
+        \file{data/artifacts/\_index.json}.
+  \item The tool returns the resulting \code{artifact\_id} and
+        \code{path} to the orchestrator, which surfaces them in the
+        tool result.
+  \item The Streamlit \emph{Artifacts} tab reads
+        \code{list\_artifacts()} and renders each artefact according
+        to its MIME type (image preview, dataframe preview for
+        parquet, download button for PDFs).
+\end{enumerate}
+
+The kind-to-category mapping is a small dictionary in
+\file{core/workspace.py}; adding a new artefact category requires only
+adding one entry.
+
+\section{Failure Modes and Graceful Degradation}
+\label{sec:failures}
+
+The pool tracks per-service state (\code{online}, \code{offline},
+\code{processing}, \code{error}) and surfaces it in the sidebar. If
+a specific tool raises an exception, the orchestrator captures the
+exception message, returns it to the LLM as the tool result, and
+allows the LLM to react (e.g.\ by picking a different tool or asking
+the user to clarify). When the Groq API returns \code{429}, the
+underlying \code{groq} client retries with exponential back-off. When
+the API key is missing, the orchestrator emits an
+\code{\{"type": "error"\}} event and the Streamlit UI renders it as
+a red banner without crashing.

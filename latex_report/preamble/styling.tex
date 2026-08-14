@@ -1,0 +1,76 @@
+% ============================================================
+% Styling — spacing, headers, chapter titles, listings, colors
+% ============================================================
+
+% ~1.5 line spacing
+\onehalfspacing
+
+% Headers / footers
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[LE,RO]{\thepage}
+\fancyhead[LO]{\slshape \rightmark}
+\fancyhead[RE]{\slshape \leftmark}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+
+\fancypagestyle{plain}{%
+  \fancyhf{}%
+  \fancyfoot[C]{\thepage}%
+  \renewcommand{\headrulewidth}{0pt}%
+}
+
+% Chapter/section titles
+\titleformat{\chapter}[display]
+  {\normalfont\huge\bfseries}
+  {\chaptertitlename\ \thechapter}
+  {20pt}
+  {\Huge}
+\titlespacing*{\chapter}{0pt}{-30pt}{20pt}
+
+% Caption style
+\captionsetup{
+  font=small, labelfont=bf,
+  labelsep=colon, format=plain, justification=centering
+}
+
+% Color palette (referenced by TikZ and listings)
+\definecolor{alPrimary}{HTML}{1F2A44}
+\definecolor{alAccent}{HTML}{4338CA}
+\definecolor{alSoft}{HTML}{E6EAF7}
+\definecolor{alMuted}{HTML}{64748B}
+\definecolor{alWarn}{HTML}{F59E0B}
+\definecolor{alOk}{HTML}{10B981}
+\definecolor{alErr}{HTML}{DC2626}
+\definecolor{codeBg}{HTML}{F8FAFC}
+\definecolor{codeStr}{HTML}{047857}
+\definecolor{codeKw}{HTML}{7C3AED}
+\definecolor{codeCmt}{HTML}{64748B}
+
+% Code listing style
+\lstdefinestyle{alPy}{
+  language=Python,
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codeBg},
+  frame=single, rulecolor=\color{alSoft},
+  keywordstyle=\color{codeKw}\bfseries,
+  commentstyle=\color{codeCmt}\itshape,
+  stringstyle=\color{codeStr},
+  numbers=left, numberstyle=\tiny\color{alMuted}, numbersep=8pt,
+  breaklines=true, breakatwhitespace=true,
+  showstringspaces=false, tabsize=4,
+  captionpos=b, aboveskip=1em, belowskip=1em,
+  literate={→}{{$\rightarrow$}}1 {•}{{$\bullet$}}1,
+}
+\lstdefinestyle{alBash}{
+  language=bash,
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codeBg},
+  frame=single, rulecolor=\color{alSoft},
+  keywordstyle=\color{codeKw}\bfseries,
+  commentstyle=\color{codeCmt}\itshape,
+  stringstyle=\color{codeStr},
+  breaklines=true, showstringspaces=false, tabsize=2,
+  captionpos=b, aboveskip=1em, belowskip=1em,
+}
+\lstset{style=alPy}

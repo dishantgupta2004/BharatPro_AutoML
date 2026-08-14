@@ -1,0 +1,242 @@
+\chapter{Results and Discussion}
+\label{ch:results}
+
+This chapter interprets the outcomes of the implementation.
+Two kinds of results are discussed: (i)~\emph{qualitative}
+outcomes that follow directly from the design and were verified
+during smoke-testing (\impl), and (ii)~\emph{quantitative}
+outcomes that require running the protocol of
+Chapter~\ref{ch:experiments} on the recommended datasets and are
+therefore presented as templates (\exper).
+
+\section{Qualitative Results (Verified during Development)}
+\label{sec:qual-results}
+
+During the migration of the codebase to the current Streamlit +
+local-first architecture, the following behaviours were exercised
+end-to-end at least once against small synthetic data and against a
+user-supplied CSV:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item Pool startup reliably brings all five services online
+        (5/5) and registers 11 unified tools plus 1 MCP prompt.
+        This is confirmed by the log line
+        \code{Pool ready (in-process): 5/5 services online, 11
+        unified tools}.
+  \item \tool{list\_uploaded\_files} correctly enumerates
+        files under \file{data/uploads/}, including a freshly saved
+        smoke CSV.
+  \item \tool{ingest\_dataset} returns the correct shape, dtypes,
+        and preview for a 3-row CSV.
+  \item A representative interactive session with a real dataset
+        exercised the tool sequence in
+        Table~\ref{tab:tool-sequence}, produced three plot
+        artefacts, a Jupyter notebook artefact, a model artefact,
+        an \code{xtrain\_sample} artefact, and a PDF report
+        artefact --- all indexed in
+        \file{data/artifacts/\_index.json}.
+  \item The Streamlit UI streams tool events, replaces in-flight
+        placeholders with success badges, and previews plots via
+        the artefact viewer.
+  \item An intentional bad target column (\code{target} on a dataset
+        that did not have such a column) initially caused a raw
+        \code{KeyError}; a fix in the modeling tool reordered the
+        validation so the platform now returns a friendly
+        \code{\{"error": "Target 'target' missing", "columns":
+        [\dots]\}} response.
+\end{itemize}
+
+The qualitative conclusion is that the design is
+\emph{internally consistent and behaviourally correct} on the
+happy path, and that at least one class of failure mode has been
+observed, diagnosed, and closed.
+
+\section{Quantitative Results (Templates)}
+\label{sec:quant-results}
+
+Table~\ref{tab:results-template} restates the experimental template
+from Chapter~\ref{ch:experiments} with columns for both cross-validated
+and held-out metrics. It is deliberately empty until the protocol
+is executed; the accompanying discussion below explains what
+observations to expect and how to interpret them.
+
+\begin{table}[H]
+\centering
+\caption{Result template (\exper). Populate after running the
+protocol on the corresponding dataset.}
+\label{tab:results-template}
+\small
+\begin{tabularx}{\linewidth}{@{}lXccccc@{}}
+\toprule
+\textbf{Dataset} & \textbf{Champion} & \textbf{CV mean} & \textbf{CV std} & \textbf{Test primary} & \textbf{Time (s)} & \textbf{Artefacts} \\
+\midrule
+Iris & --- & --- & --- & --- & --- & --- \\
+Wine & --- & --- & --- & --- & --- & --- \\
+Breast Cancer & --- & --- & --- & --- & --- & --- \\
+Adult & --- & --- & --- & --- & --- & --- \\
+California Housing & --- & --- & --- & --- & --- & --- \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Prior literature on tabular benchmarks
+\citep{grinsztajn2022trees, borisov2022deep, erickson2020autogluon}
+suggests the following prior expectations:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item On \emph{Iris} and \emph{Wine} (small, well-separated
+        classes), all four candidates should reach $\ge 0.95$
+        F1-weighted; the champion is often LightGBM or XGBoost by a
+        narrow margin.
+  \item On \emph{Breast Cancer}, gradient boosters and random
+        forests typically achieve F1 in the $0.94$--$0.98$ range;
+        LogisticRegression is a competitive baseline.
+  \item On \emph{Adult}, LightGBM and XGBoost usually win with
+        F1-weighted $\approx 0.85$; RandomForest is competitive but
+        slower.
+  \item On \emph{California Housing}, gradient boosters typically
+        achieve $R^2 \in [0.80, 0.85]$; Ridge is a distant
+        baseline.
+\end{itemize}
+
+If observed numbers deviate substantially from these expectations,
+the first suspects are (i)~data leakage introduced by a user, (ii)~a
+non-standard target-column encoding, or (iii)~an insufficient CV
+budget --- all of which are visible in the tool-call trace.
+
+\section{Strengths}
+\label{sec:strengths}
+
+The design succeeds in the following respects:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{Extensibility.} The single-decorator recipe for
+        adding tools has been validated by the fact that the entire
+        pipeline was itself built as eleven decorated functions
+        without any orchestrator changes for each addition.
+  \item \textbf{Determinism.} Every metric is produced by
+        deterministic Python code with a fixed \code{random\_state};
+        the LLM never fabricates numbers.
+  \item \textbf{Local-first storage.} \file{data/artifacts/}
+        is a plain directory that a user can inspect, back up, or
+        share as a ZIP.
+  \item \textbf{UI/logic decoupling.} The Streamlit UI is a
+        client of the orchestrator, not its owner; a CLI, Jupyter
+        widget, or FastAPI SSE layer could be substituted without
+        touching \file{core/} or \file{mcp\_servers/}.
+\end{itemize}
+
+\section{Weaknesses}
+\label{sec:weaknesses}
+
+The design has the following weaknesses:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{No experiment tracker.} Every bake-off overwrites
+        the previous champion's leaderboard in prose; only the
+        artefact registry survives across turns. A future extension
+        should record leaderboards in a small SQLite database.
+  \item \textbf{No model registry.} Models are stored by UUID but
+        there is no ``current champion'' concept or model versioning
+        across datasets.
+  \item \textbf{No test suite.} Only a smoke script exists. This is
+        acceptable for an early-stage research tool but must be
+        addressed before wider use.
+  \item \textbf{LLM dependency.} A working Groq API key is required
+        for the chat experience; the platform is far less useful
+        without it.
+  \item \textbf{Hallucination risk.} Although the LLM never
+        computes numbers, it can still misinterpret them or omit
+        important caveats. The Streamlit tool-call expanders
+        mitigate this by making the raw tool output visible.
+\end{itemize}
+
+\section{Scalability}
+\label{sec:scalability}
+
+The platform is designed for a single user on a single machine and
+should not be extrapolated beyond that regime. Concrete
+scalability limits:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item Datasets bounded by RAM. The default 200~MB upload cap is a
+        soft guard; the true limit is
+        \code{pandas.read\_csv}'s memory overhead ($\approx 5\times$
+        the raw file size).
+  \item Bake-off parallelism is limited to \code{max\_workers=4}
+        threads for candidate models; each candidate additionally
+        uses \code{n\_jobs=-1} internally, which can oversubscribe
+        cores on small machines.
+  \item Optuna sweeps run single-process (\code{n\_jobs=1} at the
+        study level) to avoid cross-model interference; scaling to
+        multiple processes requires care with random state.
+\end{itemize}
+
+\section{Reproducibility}
+\label{sec:reproducibility-results}
+
+Every artefact carries a UUID, a kind, a filename, an absolute path,
+a size, a MIME type, and a metadata dictionary. Together with a
+\code{pip freeze} and the tool-call trace this constitutes a
+reproducible record of a run, in line with community reproducibility
+guidelines \citep{pineau2021reproducibility}. What is \emph{not}
+recorded automatically: the exact LLM output (which is not
+deterministic even at temperature 0.2), the LLM version served by
+Groq (subject to provider updates), and the user's system-level
+package versions.
+
+\section{Comparison with Conventional Workflows}
+\label{sec:vs-notebook}
+
+Table~\ref{tab:vs-notebook} contrasts a manual Jupyter workflow with
+\projname.
+
+\begin{table}[H]
+\centering
+\caption{Manual Jupyter workflow vs.\ \projname.}
+\label{tab:vs-notebook}
+\small
+\begin{tabularx}{\linewidth}{@{}lXX@{}}
+\toprule
+\textbf{Aspect} & \textbf{Manual Jupyter} & \textbf{\projname} \\
+\midrule
+Time to first EDA plot & 10--30 min for a beginner & Seconds after upload; single sentence prompt \\
+Consistency of preprocessing & Depends on author & Single ColumnTransformer, embedded in exports \\
+Reproducibility of pipeline & Notebook must be curated & Generated notebook + artefact registry \\
+Choice of estimator & User decides & Bake-off compares four candidates \\
+Explainability & Rarely computed & SHAP by default after bake-off \\
+Report generation & Manual & Automatic PDF with leaderboard \\
+Barrier to entry & pandas / sklearn knowledge & Natural language + upload \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The comparison is qualitative but consistent with the target-user
+analysis in Section~\ref{sec:target-users}: the platform trades
+some of the manual notebook's freedom for opinionated defaults and
+an artefact-first workflow.
+
+\section{Discussion}
+\label{sec:discussion}
+
+The results validate the central hypothesis of the project --- that
+a conversational, MCP-driven interface can meaningfully lower the
+activation energy for tabular ML without hiding what happens under
+the hood. Two second-order observations are worth noting.
+
+\paragraph{The LLM is a scheduler, not a modeller.}
+In the observed runs the LLM never proposed a novel algorithm; it
+merely selected among the eleven pre-existing tools. This is by
+design and it keeps the numerical work fully deterministic. It also
+suggests that the ``agentic'' framing is somewhat overloaded --- the
+LLM's job here is closer to that of a shell script than to that of
+an autonomous agent.
+
+\paragraph{Tool descriptions matter.}
+Docstrings are the LLM's only source of information about each
+tool. Rewriting a docstring from ``\emph{Runs the bake-off}'' to
+``\emph{Parallel CV race across RandomForest, XGBoost, LightGBM, and
+a baseline; returns leaderboard and champion model artefact}''
+observably improves tool selection. This mirrors findings in the
+tool-use literature \citep{patil2023gorilla, qin2024toolllm}: the
+description \emph{is} the API.

@@ -1,0 +1,265 @@
+\chapter{Implementation}
+\label{ch:impl}
+
+This chapter presents selected implementation details that support
+the architectural claims in Chapters~\ref{ch:arch}--\ref{ch:pipeline}.
+Code excerpts are short and deliberately illustrative rather than
+exhaustive; the full source is available in the accompanying
+repository.
+
+\section{The Event Schema}
+\label{sec:event-schema}
+
+The single most important design choice in the orchestrator is that
+\code{stream\_chat} yields plain event dictionaries, not SSE strings.
+This decouples the orchestrator from any particular front-end.
+
+\begin{lstlisting}[caption={Event dictionary shapes emitted by
+\code{orchestrator/loop.py::stream\_chat}.},
+label={lst:events}]
+{"type": "token",        "content": str}
+{"type": "tool_start",   "name": str, "label": str,
+                          "service": str, "arguments": dict}
+{"type": "tool_progress","message": str, "percentage": float}
+{"type": "tool_end",     "name": str, "label": str, "service": str,
+                          "result": Any, "error": str | None,
+                          "duration_ms": int}
+{"type": "done",         "answer": str, "tool_calls": list[dict]}
+{"type": "error",        "message": str}
+\end{lstlisting}
+
+A Streamlit consumer, a CLI, or a SSE-over-HTTP wrapper can all
+consume this stream identically.
+
+\section{Streaming Tool-Call Accumulation}
+\label{sec:tool-accum}
+
+OpenAI-compatible streaming APIs deliver tool call arguments in
+partial chunks; the orchestrator accumulates them by index:
+
+\begin{lstlisting}[caption={Argument accumulation loop (extract).},
+label={lst:accum}]
+if getattr(delta, "tool_calls", None):
+    for tc_delta in delta.tool_calls:
+        idx = tc_delta.index
+        slot = pending_tool_calls.setdefault(
+            idx, {"id": None, "name": "", "arguments": ""})
+        if tc_delta.id:
+            slot["id"] = tc_delta.id
+        fn = getattr(tc_delta, "function", None)
+        if fn:
+            if getattr(fn, "name", None):     slot["name"]      = fn.name
+            if getattr(fn, "arguments", None): slot["arguments"] += fn.arguments
+        if idx not in started_tool_indices and slot["name"]:
+            started_tool_indices.add(idx)
+            yield {"type": "tool_start", "name": slot["name"], ...}
+\end{lstlisting}
+
+A \code{tool\_start} event is emitted as soon as the tool name is
+first observed, giving the UI a chance to render an ``in-progress''
+placeholder even before the argument JSON has finished streaming.
+
+\section{Progress Bridging via \code{asyncio.Queue}}
+\label{sec:queue-bridge}
+
+Tools emit progress via \code{ctx.report\_progress(current, total,
+message)}. The orchestrator installs a handler that pushes
+\code{tool\_progress} events into an asyncio queue, then interleaves
+the queue with the tool's completion future:
+
+\begin{lstlisting}[caption={Interleaving tool execution and progress
+events.}, label={lst:queue}]
+call_task = asyncio.create_task(
+    pool.call_tool(name, args, progress_handler=progress_handler))
+
+while True:
+    try:
+        evt = await asyncio.wait_for(progress_queue.get(), timeout=0.05)
+        yield evt
+    except asyncio.TimeoutError:
+        if call_task.done():
+            break
+while not progress_queue.empty():
+    yield progress_queue.get_nowait()
+\end{lstlisting}
+
+The tight 50~ms poll interval feels responsive to the user without
+starving the event loop.
+
+\section{The MCPClientPool}
+\label{sec:pool-impl}
+
+The pool exposes a small surface but does non-trivial routing work.
+
+\begin{lstlisting}[caption={\code{MCPClientPool.call\_tool} (extract).},
+label={lst:call-tool}]
+async def call_tool(self, tool_name, arguments,
+                    progress_handler=None, log_handler=None):
+    service = self.tool_index.get(tool_name)
+    if service is None:
+        raise KeyError(f"Tool not in unified registry: {tool_name}")
+    actual_name = tool_name
+    if "__" in tool_name and \
+       tool_name.split("__", 1)[0].replace("_", "-") == service:
+        actual_name = tool_name.split("__", 1)[1]
+    client = self.clients.get(service)
+    state = self.states[service]
+    if client is None:
+        state.status = "offline"
+        raise RuntimeError(f"Service `{service}` is not connected")
+    state.status = "processing"
+    await self._notify_observers(state)
+    try:
+        kwargs = {}
+        if progress_handler is not None:
+            kwargs["progress_handler"] = progress_handler
+        result = await client.call_tool(actual_name, arguments, **kwargs)
+        state.status, state.last_error = "online", None
+        return result
+    except Exception as exc:
+        state.status = "error"
+        state.last_error = f"{type(exc).__name__}: {exc}"
+        raise
+\end{lstlisting}
+
+The name collision handling around \code{"\_\_"} allows two servers
+to expose tools with identical names without the pool rejecting the
+registration.
+
+\section{The Workspace Registry}
+\label{sec:workspace-impl}
+
+The full artefact save function is short enough to reproduce in
+full:
+
+\begin{lstlisting}[caption={\code{core/workspace.py::save\_artifact}
+(complete function).}, label={lst:save-art}]
+def save_artifact(*, local_path: Path, kind: str,
+                  metadata: dict[str, Any] | None = None,
+                  move: bool = True) -> ArtifactRecord:
+    if not local_path.exists():
+        raise FileNotFoundError(f"Cannot register non-existent file: {local_path}")
+    category = _KIND_TO_CATEGORY.get(kind, "misc")
+    dest_dir = _artifacts() / category
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    artifact_id = str(uuid.uuid4())
+    safe = _safe_stem(local_path.name)
+    dest_path = dest_dir / f"{artifact_id[:8]}__{safe}"
+    if move:
+        shutil.move(str(local_path), dest_path)
+    else:
+        shutil.copy2(local_path, dest_path)
+    record = ArtifactRecord(
+        id=artifact_id, kind=kind, category=category,
+        filename=local_path.name, path=str(dest_path.resolve()),
+        size_bytes=dest_path.stat().st_size,
+        mime_type=_mime_for(dest_path), metadata=metadata or {},
+    )
+    idx = _load_artifact_index()
+    idx.append(record.to_dict())
+    _write_artifact_index(idx)
+    return record
+\end{lstlisting}
+
+\section{The Bake-off Worker}
+\label{sec:worker-impl}
+
+Each candidate model is trained in a worker function that captures
+its own errors, so a single failing model does not abort the whole
+race:
+
+\begin{lstlisting}[caption={\code{\_train\_one} worker (extract).},
+label={lst:worker}]
+def _train_one(name, estimator, pre, Xtr, ytr, Xte, yte, problem, cv):
+    pipe = Pipeline([("pre", pre), ("model", estimator)])
+    t0 = time.time()
+    scoring = "f1_weighted" if problem == "classification" else "r2"
+    try:
+        cv_scores = cross_val_score(pipe, Xtr, ytr, cv=cv,
+                                    scoring=scoring, n_jobs=-1)
+        pipe.fit(Xtr, ytr)
+        preds = pipe.predict(Xte)
+        metrics = _metrics(problem, ytr, yte, preds)
+        return {"model": name, "cv_mean": float(cv_scores.mean()),
+                "cv_std": float(cv_scores.std()), "metrics": metrics,
+                "train_seconds": round(time.time()-t0, 3),
+                "pipeline": pipe, "error": None}
+    except Exception as exc:
+        return {"model": name, "cv_mean": None, "cv_std": None,
+                "metrics": {}, "train_seconds": round(time.time()-t0, 3),
+                "pipeline": None,
+                "error": f"{type(exc).__name__}: {exc}"}
+\end{lstlisting}
+
+\section{Streamlit \code{PoolRunner}}
+\label{sec:st-runner}
+
+Streamlit's model re-runs the script top-to-bottom on every widget
+event. To keep the MCP pool alive across those re-runs, it is cached
+via \code{st.cache\_resource} inside a \code{PoolRunner} that owns a
+dedicated event loop:
+
+\begin{lstlisting}[caption={\code{PoolRunner} (extract).},
+label={lst:runner}]
+class PoolRunner:
+    def __init__(self):
+        self.loop = asyncio.new_event_loop()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+        self.pool = MCPClientPool()
+        register_default_servers(self.pool)
+        asyncio.run_coroutine_threadsafe(self.pool.start(), self.loop).result()
+
+    def _run(self):
+        asyncio.set_event_loop(self.loop)
+        self.loop.run_forever()
+
+    def stream_events(self, query, active_file, history):
+        q: queue.Queue = queue.Queue()
+        async def _drive():
+            try:
+                async for evt in stream_chat(
+                    query=query, active_file=active_file,
+                    history=history, pool=self.pool):
+                    q.put(evt)
+            finally:
+                q.put(None)
+        asyncio.run_coroutine_threadsafe(_drive(), self.loop)
+        return q
+\end{lstlisting}
+
+The thread-safe queue is the bridge: the async producer runs in the
+background loop, while the Streamlit script consumes events
+synchronously and updates placeholders in place.
+
+\section{Error Handling Discipline}
+\label{sec:errors-impl}
+
+Errors are surfaced consistently through the event pipeline. Tools
+that hit a domain error (e.g.\ ``target column not found'') return a
+result dictionary of the form \code{\{"error": "\dots"\}}; tools
+that raise a Python exception have the exception caught by the
+orchestrator, converted into a synthetic result dictionary with
+\code{\{"error": "TypeName: message"\}}, and surfaced as a
+\code{tool\_end} event with a non-null \code{error} field. This
+makes the LLM's next reasoning step deterministic: it sees the
+error string in the tool result and can decide whether to retry, ask
+the user for clarification, or continue with a different plan.
+
+\section{Test and Smoke Verification}
+\label{sec:tests-impl}
+
+The repository currently contains no automated test suite;
+verification is done through a smoke script that:
+
+\begin{enumerate}[leftmargin=1.4em]
+  \item Imports and instantiates the pool.
+  \item Calls \tool{list\_uploaded\_files} and confirms an empty
+        registry starts empty.
+  \item Uploads a small synthetic CSV via
+        \code{save\_uploaded\_dataset} and calls
+        \tool{ingest\_dataset} to confirm the round trip.
+\end{enumerate}
+
+The absence of automated tests is a known limitation and is discussed
+in Chapter~\ref{ch:limitations}.

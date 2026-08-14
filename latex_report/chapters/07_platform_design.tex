@@ -1,0 +1,289 @@
+\chapter{Platform Design}
+\label{ch:design}
+
+Where Chapter~\ref{ch:arch} presented the architecture at the level
+of boxes and arrows, this chapter describes each module in terms of
+its Python types, key responsibilities, and design rationale. Every
+reference in this chapter points to a real file in the repository.
+
+\section{Project Structure}
+\label{sec:project-structure}
+
+\begin{lstlisting}[style=alBash, caption={Top-level project structure.},
+                    label={lst:tree}]
+automl-mcp-platform/
+|-- app/
+|   |-- streamlit_app.py     # Streamlit entrypoint (thin UI)
+|   `-- components/          # reserved for render helpers
+|-- core/
+|   |-- config.py            # pydantic-settings + derived paths
+|   |-- logger.py            # named-logger factory
+|   `-- workspace.py         # datasets + artifacts registry (local FS)
+|-- mcp_servers/
+|   |-- data.py              # ingest, list, pandera validation
+|   |-- eda.py               # run_full_eda, correlation, prompt
+|   |-- modeling.py          # bake-off + Optuna sweep
+|   |-- explain.py           # SHAP + native feature importances
+|   `-- export.py            # Jupyter notebook + PDF report
+|-- orchestrator/
+|   |-- pool.py              # MCPClientPool over FastMCPTransport
+|   `-- loop.py              # Groq tool-calling loop
+|-- data/{uploads,artifacts,tmp}/
+|-- requirements.txt
+|-- .env.example
+`-- README.md
+\end{lstlisting}
+
+The choice to keep four sibling top-level packages
+(\code{app}, \code{core}, \code{mcp\_servers}, \code{orchestrator})
+rather than nesting them under a single \code{src/} package is
+deliberate: it makes the dependency graph flat and readable
+(\code{app $\rightarrow$ orchestrator $\rightarrow$ mcp\_servers $\rightarrow$ core}),
+and it keeps the Streamlit entrypoint invokable with
+\code{streamlit run app/streamlit\_app.py} without any wrapper.
+
+\section{Configuration}
+\label{sec:config}
+
+Configuration is centralised in \file{core/config.py}:
+
+\begin{lstlisting}[caption={\file{core/config.py} (extract).},
+                    label={lst:config}]
+class Settings(BaseSettings):
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    MAX_TOOL_ITERATIONS: int = 8
+    MAX_UPLOAD_MB: int = 200
+    DATA_DIR: str = str(REPO_ROOT / "data")
+
+    @property
+    def data_path(self) -> Path: ...
+    @property
+    def uploads_path(self) -> Path: ...
+    @property
+    def artifacts_path(self) -> Path: ...
+    @property
+    def tmp_path(self) -> Path: ...
+\end{lstlisting}
+
+Every setting is env-driven through \code{pydantic-settings}
+\citep{pydantic}. Derived paths are exposed as properties that
+create the directory on first access, so no module has to worry
+about directory existence. Appendix~\ref{app:config} lists every
+setting with its default and description.
+
+\section{Logging}
+\label{sec:logging}
+
+\file{core/logger.py} exposes a single \code{get\_logger(name)}
+factory that returns a name-scoped logger with a compact stderr
+formatter. This keeps log output consistent across every module and
+avoids the common ``duplicate handler'' problem when Streamlit
+re-runs the script:
+
+\begin{lstlisting}[caption={\file{core/logger.py}.},label={lst:logger}]
+def get_logger(name: str) -> logging.Logger:
+    logger = logging.getLogger(name)
+    if logger.handlers:
+        return logger  # idempotent
+    logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter(
+        fmt="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+        datefmt="%H:%M:%S"))
+    logger.addHandler(handler)
+    logger.propagate = False
+    return logger
+\end{lstlisting}
+
+\section{The Workspace Module}
+\label{sec:workspace}
+
+\file{core/workspace.py} is the sole persistence layer. It contains
+two dataclasses --- \code{DatasetRecord} and \code{ArtifactRecord}
+--- and a small set of pure functions.
+
+\paragraph{Dataset operations.}
+\code{save\_uploaded\_dataset(filename, data, \dots)} writes raw
+bytes into \file{data/uploads/}, deduplicating filenames by appending
+a Unix timestamp when necessary, and returns a \code{DatasetRecord}
+with a UUID and populated row/column metadata (if supplied by the
+caller). \code{list\_datasets()} enumerates the uploads directory and
+returns dictionaries sorted by modification time.
+\code{resolve\_dataset(file\_ref)} accepts either an absolute path or
+a base filename and returns the resolved \code{Path}, raising
+\code{FileNotFoundError} with a helpful message when the file is not
+present.
+
+\paragraph{Artefact operations.}
+\code{save\_artifact(local\_path, kind, metadata=\dots, move=True)}
+is the single entry point that every MCP tool uses. It:
+\begin{enumerate}[leftmargin=1.4em]
+  \item Resolves the target category from a kind-to-category
+        dictionary (\code{plot} $\rightarrow$ \code{plots},
+        \code{model} $\rightarrow$ \code{models}, etc.).
+  \item Assigns a UUID and constructs a destination path of the form
+        \code{data/artifacts/<category>/<uuid[:8]>\_\_<safe\_name>}.
+  \item Moves or copies the file, computes MIME type via
+        \code{mimetypes}, and appends a JSON record to
+        \file{data/artifacts/\_index.json}.
+\end{enumerate}
+The registry is a plain JSON array to keep the code trivial;
+switching to SQLite or an experiment tracker (Section~\ref{sec:future-mlops})
+requires changing only this file.
+
+\section{The MCP Servers}
+\label{sec:servers-design}
+
+Each server module follows the same template:
+
+\begin{lstlisting}[caption={MCP server module template.},
+                    label={lst:server-template}]
+mcp = FastMCP(name="mcp-<service>")
+
+@mcp.tool
+def <tool_name>(arg1: <T1>, arg2: <T2> = <default>, ...) -> dict[str, Any]:
+    """Short description used as the LLM-visible tool description.
+
+    Args:
+        arg1: ...
+        arg2: ...
+    """
+    ...
+    return {"...": ...}
+\end{lstlisting}
+
+Tools whose work is compute-bound or IO-bound are declared
+\code{async def} and additionally receive a \code{ctx: Context}
+parameter through which they emit progress with
+\code{ctx.report\_progress(current, total, message)}.
+
+\subsection{\svc{mcp-data}}
+Three tools: \tool{list\_uploaded\_files},
+\tool{ingest\_dataset}, \tool{validate\_schema\_with\_pandera}.
+The validation tool infers a \code{pandera.DataFrameSchema} by
+walking each column: numeric columns receive an \code{in\_range} check,
+low-cardinality string columns receive an \code{isin} check, and
+nullability follows from observed NaN values. The tool returns the
+first 50 failure cases (column, check, offending value, index) to
+make debugging tractable.
+
+\subsection{\svc{mcp-eda}}
+Two tools: \tool{run\_full\_eda} and \tool{render\_correlation\_matrix},
+and one prompt: \tool{eda\_deep\_dive}. The full EDA tool renders
+three PNGs into a per-service scratch directory
+(\file{data/tmp/eda/}) before handing them to
+\code{save\_artifact}. Correlation entries above $|\rho|\ge 0.6$ are
+returned as ``strong correlations'' so that the LLM can surface them
+in prose.
+
+\subsection{\svc{mcp-modeling}}
+Two tools: \tool{run\_parallel\_bake\_off} and
+\tool{trigger\_hyperparameter\_sweep}.
+The bake-off constructs a shared
+\code{ColumnTransformer} preprocessor and spawns a
+\code{ThreadPoolExecutor} with up to four workers, one per
+candidate. Each worker runs $k$-fold cross-validation with either
+\code{f1\_weighted} or \code{r2}, then refits on the full training
+split and evaluates on the held-out test split. Champion selection
+uses the primary metric (F1 for classification, $R^2$ for
+regression). The champion pipeline is serialised with \code{joblib}
+along with the feature columns, problem type, and target column, and
+persisted as a \code{model} artefact. A 500-row sample of
+\code{X\_train} is written as parquet and persisted as an
+\code{xtrain\_sample} artefact for downstream SHAP.
+
+\subsection{\svc{mcp-explain}}
+Two tools: \tool{calculate\_shap\_values} and
+\tool{generate\_feature\_importance\_plot}.
+Both tools read the champion artefact by ID via
+\code{workspace.artifact\_path}, so the ID plumbed from the bake-off
+result is the only coupling between the modelling and explainability
+stages.
+
+\subsection{\svc{mcp-export}}
+Two tools: \tool{generate\_jupyter\_notebook} and
+\tool{compile\_pdf\_report}. Notebooks are built as pure Python
+dictionaries following the nbformat schema and serialised to disk
+with \code{json.dumps}. PDFs are built with ReportLab
+\citep{reportlab}: a title block, a summary paragraph, a leaderboard
+table, and an optional notes section.
+
+\section{Orchestration Design}
+\label{sec:orch-design}
+
+Two responsibilities live in \file{orchestrator/}: aggregating the
+tools into a single catalog (\file{pool.py}) and iterating on the
+LLM's tool-call loop (\file{loop.py}).
+
+\subsection{The Pool}
+\label{sec:pool-design}
+
+\code{MCPClientPool} maintains three registries: \code{tool\_index}
+(tool name $\to$ owning service name), \code{tool\_schemas}
+(OpenAI-compatible schema list ready to be passed to Groq), and
+\code{prompt\_index}. Registries are rebuilt on start-up and can be
+refreshed after a service reconnect.
+
+A key design decision is name-collision handling. If two servers
+register a tool with the same name, the second one is registered
+under a canonical name of the form
+\code{<service>\_\_<original\_name>}. This is deliberately loud so
+that the developer notices and renames.
+
+\subsection{The Loop}
+\label{sec:loop-design}
+
+\code{stream\_chat} is an asynchronous generator of event dicts.
+Each iteration of the outer \code{for} loop is one Groq streaming
+call. The loop accumulates \code{tool\_calls} chunks, materialises
+them into a list, executes them (with per-tool progress bridged
+through an \code{asyncio.Queue}), appends the tool results back to
+the message history, and re-invokes the LLM. The loop terminates
+either when Groq emits no \code{tool\_calls} in an iteration or when
+\code{MAX\_TOOL\_ITERATIONS} is reached.
+
+The generator emits six event kinds --- \code{token},
+\code{tool\_start}, \code{tool\_progress}, \code{tool\_end},
+\code{done}, \code{error} --- documented in
+Section~\ref{sec:event-schema}. This design is intentionally
+UI-agnostic: any consumer (CLI, Jupyter widget, Streamlit,
+FastAPI-over-SSE) can subscribe.
+
+\section{Streamlit Front-end}
+\label{sec:st-design}
+
+The UI has three tabs: \emph{Chat}, \emph{Artifacts}, and
+\emph{Tools}. A sidebar contains the upload widget, the active
+dataset selector, and a live service-status list built from
+\code{pool.snapshot()}.
+
+To bridge Streamlit's synchronous execution model with the async
+orchestrator, the UI creates a single \code{PoolRunner} object cached
+via \code{st.cache\_resource}. \code{PoolRunner} owns a dedicated
+event loop running in a daemon thread and exposes a
+\code{stream\_events(query, active\_file, history)} method that
+returns a \code{queue.Queue}. Each user turn consumes the queue in
+the main thread and updates Streamlit placeholders in place. This
+gives the appearance of real-time streaming without pushing async
+into the Streamlit script.
+
+\section{Extensibility}
+\label{sec:extensibility}
+
+Adding a new capability follows a strict recipe:
+
+\begin{enumerate}[leftmargin=1.4em]
+  \item Add a \code{@mcp.tool}-decorated function to the appropriate
+        \file{mcp\_servers/<service>.py} (or create a new server
+        module and register it in
+        \file{orchestrator/pool.py::register\_default\_servers}).
+  \item If the tool generates a new kind of file, add a
+        kind-to-category entry to \code{\_KIND\_TO\_CATEGORY} in
+        \file{core/workspace.py}.
+  \item Optionally, add a friendly label to \code{TOOL\_LABELS} in
+        \file{orchestrator/loop.py}.
+\end{enumerate}
+
+No change is required to the Streamlit UI or to the orchestration
+loop.

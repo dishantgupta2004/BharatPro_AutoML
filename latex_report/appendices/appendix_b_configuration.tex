@@ -1,0 +1,53 @@
+\chapter{Configuration Reference}
+\label{app:config}
+
+Every configuration setting is loaded from the \file{.env} file in
+the repository root through \code{pydantic-settings}
+\citep{pydantic}. The complete list is reproduced below and matches
+\file{core/config.py}.
+
+\begin{table}[H]
+\centering
+\caption{Configuration variables (all read from \file{.env}).}
+\label{tab:config}
+\small
+\begin{tabularx}{\linewidth}{@{}lXl@{}}
+\toprule
+\textbf{Variable} & \textbf{Purpose} & \textbf{Default} \\
+\midrule
+\code{GROQ\_API\_KEY} & Groq API key. Required for chat/orchestration; if empty, the UI shows an error banner and disables the chat input. & \emph{(empty)} \\
+\code{GROQ\_MODEL} & Groq model identifier used by the tool-call loop. & \code{llama-3.3-70b-versatile} \\
+\code{MAX\_TOOL\_ITERATIONS} & Maximum number of outer loop iterations per user turn. & \code{8} \\
+\code{MAX\_UPLOAD\_MB} & Upload size cap enforced client-side in the Streamlit sidebar. & \code{200} \\
+\code{DATA\_DIR} & Root directory for \file{uploads/}, \file{artifacts/}, and \file{tmp/}. Absolute or relative to the repository. & \code{./data} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section*{Sample \file{.env.example}}
+
+\begin{lstlisting}[style=alBash, caption={Contents of \file{.env.example}.}, label={lst:env}]
+# Groq LLM (required for chat/orchestration)
+GROQ_API_KEY=gsk_your_key_here
+GROQ_MODEL=llama-3.3-70b-versatile
+
+# Orchestrator behavior
+MAX_TOOL_ITERATIONS=8
+MAX_UPLOAD_MB=200
+
+# Where uploaded datasets, generated artifacts, and tmp files live.
+# Leave commented to use ./data at the repo root.
+# DATA_DIR=./data
+\end{lstlisting}
+
+\section*{Derived Paths}
+
+\code{Settings} exposes the following properties, each of which
+creates the underlying directory on first access:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \code{settings.data\_path} $\to$ \file{./data}
+  \item \code{settings.uploads\_path} $\to$ \file{./data/uploads}
+  \item \code{settings.artifacts\_path} $\to$ \file{./data/artifacts}
+  \item \code{settings.tmp\_path} $\to$ \file{./data/tmp}
+\end{itemize}

@@ -1,0 +1,60 @@
+\chapter{Project Structure}
+\label{app:structure}
+
+The repository shipped alongside this report has the following
+layout. Every path is relative to the repository root
+\file{automl-mcp-platform/}. Sizes are in lines of Python (LoC).
+
+\begin{lstlisting}[style=alBash, caption={Repository tree.},
+                    label={lst:tree-app}]
+automl-mcp-platform/
+|-- app/
+|   |-- __init__.py                  (0)
+|   |-- streamlit_app.py             (~345 LoC)
+|   `-- components/                  (reserved for render helpers)
+|-- core/
+|   |-- __init__.py                  (0)
+|   |-- config.py                    (~52 LoC)
+|   |-- logger.py                    (~19 LoC)
+|   `-- workspace.py                 (~252 LoC)
+|-- mcp_servers/
+|   |-- __init__.py                  (0)
+|   |-- data.py                      (~180 LoC)
+|   |-- eda.py                       (~336 LoC)
+|   |-- modeling.py                  (~388 LoC)
+|   |-- explain.py                   (~197 LoC)
+|   `-- export.py                    (~284 LoC)
+|-- orchestrator/
+|   |-- __init__.py                  (~5 LoC)
+|   |-- pool.py                      (~288 LoC)
+|   `-- loop.py                      (~295 LoC)
+|-- data/
+|   |-- uploads/    (raw CSV / TSV / Parquet)
+|   |-- artifacts/  (plots, models, notebooks, reports)
+|   `-- tmp/        (per-service scratch)
+|-- .env.example
+|-- .gitignore
+|-- LICENSE                          (Apache-2.0)
+|-- README.md
+`-- requirements.txt
+\end{lstlisting}
+
+\section*{Total Codebase Size}
+
+\begin{table}[H]
+\centering
+\caption{Lines of Python by package.}
+\label{tab:loc}
+\begin{tabular}{@{}lr@{}}
+\toprule
+\textbf{Package} & \textbf{LoC (approx.)} \\
+\midrule
+\file{core/}         & 323 \\
+\file{mcp\_servers/} & 1\,385 \\
+\file{orchestrator/} & 588 \\
+\file{app/}          & 345 \\
+\midrule
+\textbf{Total}       & \textbf{2\,641} \\
+\bottomrule
+\end{tabular}
+\end{table}

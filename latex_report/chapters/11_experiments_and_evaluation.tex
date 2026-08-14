@@ -1,0 +1,211 @@
+\chapter{Experiments and Evaluation Protocol}
+\label{ch:experiments}
+
+The current repository does \emph{not} ship a fixed set of
+end-to-end benchmark experiments with recorded numerical results.
+The migration to a Streamlit / local-first architecture prioritised
+correctness and reproducibility over benchmark curation. This chapter
+therefore defines a rigorous experimental \emph{protocol} that a
+future user of the platform can execute to produce the numbers.
+Placeholders are labelled \exper{} throughout; when the protocol is
+executed, the numbers can be written into Appendix~\ref{app:extra}
+without altering the rest of the report.
+
+\section{Datasets}
+\label{sec:datasets}
+
+The recommended benchmark set is intentionally small and
+tabular-only, chosen to be freely available, well studied, and
+diverse in task type and size.
+
+\begin{table}[H]
+\centering
+\caption{Recommended benchmark datasets. All are freely available
+from the UCI Machine Learning Repository \citep{uci}.}
+\label{tab:datasets}
+\begin{tabular}{@{}lrrll@{}}
+\toprule
+\textbf{Dataset} & \textbf{Rows} & \textbf{Cols} & \textbf{Target} & \textbf{Task} \\
+\midrule
+Iris \citep{uciiris}       & 150   & 4  & Species       & Multi-class classification \\
+Wine \citep{uciwine}       & 178   & 13 & Class         & Multi-class classification \\
+Breast Cancer \citep{ucibreast} & 569 & 30 & Diagnosis     & Binary classification \\
+Adult \citep{uciadult}     & 48\,842 & 14 & Income $>\!\$50\text{k}$ & Binary classification \\
+Boston Housing \citep{harrison1978boston}\footnotemark & 506 & 13 & Median price   & Regression \\
+California Housing \citep{pace1997california} & 20\,640 & 8 & Median value   & Regression \\
+\bottomrule
+\end{tabular}
+\end{table}
+\footnotetext{The Boston Housing dataset has known ethical
+concerns \citep{caroll2020boston}; substitute California Housing or
+another regression dataset if preferred.}
+
+\section{Experimental Setup}
+\label{sec:setup}
+
+For every experiment the following invariants hold:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item Random seed: \code{random\_state=42} throughout.
+  \item Split: 80/20 train/test via
+        \code{train\_test\_split} with stratification for
+        classification when every class has $\ge 2$ samples.
+  \item Cross-validation: $k=3$ folds inside
+        \code{cross\_val\_score} for the bake-off; $k=3$ for the
+        Optuna sweep.
+  \item Candidates: RandomForest ($n\!=\!200$), XGBoost
+        ($n\!=\!200$), LightGBM ($n\!=\!200$),
+        LogisticRegression or Ridge as baseline. All defaults from
+        \file{mcp\_servers/modeling.py::\_candidates}.
+  \item Metrics: \code{f1\_weighted} for classification, $R^2$ for
+        regression.
+  \item Preprocessing: shared \code{ColumnTransformer}
+        (median-impute + scale for numerics, most-frequent + one-hot
+        for categoricals).
+\end{itemize}
+
+\section{Hardware and Software Environment}
+\label{sec:env}
+
+\begin{table}[H]
+\centering
+\caption{Reference execution environment used during development
+smoke-testing. Users should record their own environment in
+Appendix~\ref{app:extra} when they run the protocol.}
+\label{tab:env}
+\begin{tabularx}{\linewidth}{@{}lX@{}}
+\toprule
+\textbf{Item} & \textbf{Reference value} \\
+\midrule
+OS            & Windows 11 (development), Linux/macOS supported \\
+Python        & 3.11+ \\
+CPU           & Consumer laptop, 4--8 physical cores \\
+RAM           & 16~GB \\
+GPU           & Not required \\
+LLM provider  & Groq Chat Completions API \\
+LLM model     & \code{llama-3.3-70b-versatile} \\
+Streamlit     & $\ge$ 1.36 \\
+FastMCP       & $\ge$ 3.0 \\
+scikit-learn  & Latest stable at install time \\
+XGBoost / LightGBM & Latest stable at install time \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Baselines}
+\label{sec:baselines}
+
+The natural baselines for the platform are:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{Notebook baseline.} A manually written notebook that
+        loads the dataset, applies the same preprocessing, trains
+        each candidate with default parameters, and reports the
+        same metrics. This baseline should produce identical
+        numbers to \projname{} when the same random seed is used;
+        any deviation indicates a bug.
+  \item \textbf{Auto-sklearn} \citep{feurer2015autosklearn}.
+        A stronger AutoML baseline. \projname{} is not expected to
+        outperform Auto-sklearn on accuracy; the comparison is
+        primarily on \emph{usability} and \emph{artefact quality}.
+  \item \textbf{AutoGluon-tabular} \citep{erickson2020autogluon}.
+        Another strong baseline that produces stacked ensembles.
+\end{itemize}
+
+\section{Metrics Reported}
+\label{sec:metrics-reported}
+
+For each dataset, the protocol records:
+
+\begin{enumerate}[leftmargin=1.4em]
+  \item Champion model name.
+  \item Primary metric value on the test split.
+  \item CV mean and standard deviation of the primary metric.
+  \item Full leaderboard (all candidates with metric and training time).
+  \item Wall-clock time for the bake-off tool call.
+  \item Number and total size of generated artefacts.
+\end{enumerate}
+
+Chapter~\ref{ch:results} discusses the interpretation of these
+numbers.
+
+\section{Reproducibility Checklist}
+\label{sec:repro-checklist}
+
+Following \citet{pineau2021reproducibility}, each experimental run
+should record:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item Dataset URL and SHA-256 hash of the CSV.
+  \item Exact tool invocations and arguments (available in
+        \file{data/artifacts/\_index.json}).
+  \item \code{pip freeze} output.
+  \item Random seed (\code{random\_state=42}).
+  \item Wall-clock start and end times.
+\end{itemize}
+
+The platform provides most of these automatically; the dataset hash
+and \code{pip freeze} are the only manual steps.
+
+\section{Experimental Template}
+\label{sec:template}
+
+Table~\ref{tab:experiment-template} is the template to fill in per
+dataset. Cells marked ``---'' are to be populated by the person
+running the protocol.
+
+\begin{table}[H]
+\centering
+\caption{Experimental result template (\exper{}). Populate each
+row after running the protocol on the corresponding dataset.}
+\label{tab:experiment-template}
+\small
+\begin{tabularx}{\linewidth}{@{}lXcccc@{}}
+\toprule
+\textbf{Dataset} & \textbf{Champion} & \textbf{Primary} & \textbf{CV mean} & \textbf{CV std} & \textbf{Time (s)} \\
+\midrule
+Iris & --- & --- & --- & --- & --- \\
+Wine & --- & --- & --- & --- & --- \\
+Breast Cancer & --- & --- & --- & --- & --- \\
+Adult & --- & --- & --- & --- & --- \\
+California Housing & --- & --- & --- & --- & --- \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{LLM Behavioural Evaluation}
+\label{sec:llm-eval}
+
+In addition to the numerical AutoML metrics, the platform should be
+evaluated on \emph{agent behaviour}. Table~\ref{tab:llm-eval-rubric}
+proposes a rubric.
+
+\begin{table}[H]
+\centering
+\caption{Rubric for LLM behavioural evaluation. Score each item on
+1--5 across a set of natural-language prompts.}
+\label{tab:llm-eval-rubric}
+\small
+\begin{tabularx}{\linewidth}{@{}lX@{}}
+\toprule
+\textbf{Dimension} & \textbf{Description} \\
+\midrule
+Tool selection accuracy & Did the LLM pick the correct tool(s) for the request? \\
+Argument fidelity & Are argument values (\code{file\_path},
+\code{target\_column}, \code{model\_family}, \dots) correct? \\
+Composition correctness & For multi-tool requests, did the sequence
+match the pipeline (e.g.\ SHAP after bake-off)? \\
+Result grounding & Are prose claims grounded in tool outputs, not
+hallucinated? \\
+Failure handling & When a tool errored, did the LLM recover
+gracefully (retry, ask user, alternative tool)? \\
+Formatting quality & Are outputs concise, well-structured, and free
+of spurious markdown? \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The rubric can be applied to a fixed suite of prompts (e.g.\ 20
+prompts $\times$ 5 datasets) and averaged. This evaluation is
+important because the platform's usability, not its raw accuracy, is
+its primary contribution.

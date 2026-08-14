@@ -1,0 +1,53 @@
+% ============================================================
+% Custom commands used throughout the report
+% ============================================================
+
+% Project name and one-line tagline
+\newcommand{\projname}{AutoLab}
+\newcommand{\projtag}{Conversational AutoML on the Model Context Protocol}
+
+% Inline code / file / tool / service labels
+\newcommand{\file}[1]{\texttt{#1}}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\svc}[1]{\textsf{\small #1}}
+\newcommand{\tool}[1]{\textsf{\small\itshape #1}}
+
+% Status badges used to distinguish implemented / proposed content
+\newcommand{\statusbadge}[2]{%
+  \fcolorbox{#1}{#1!15}{\textbf{\color{#1}\textsc{\footnotesize #2}}}%
+}
+\newcommand{\impl}{\statusbadge{alOk}{implemented}}
+\newcommand{\exper}{\statusbadge{alAccent}{experimental}}
+\newcommand{\propd}{\statusbadge{alWarn}{proposed}}
+\newcommand{\future}{\statusbadge{alMuted}{future work}}
+
+% Chapter opening quote box (small, optional)
+\newcommand{\chapquote}[2]{%
+  \begin{flushright}
+    \begin{minipage}{0.75\linewidth}
+      \itshape\small #1\\[-0.3em]
+      \hfill\upshape\textsc{\footnotesize --- #2}
+    \end{minipage}
+  \end{flushright}\vspace{1em}
+}
+
+% TikZ block styles (used in architecture diagrams)
+\tikzset{
+  al-node/.style={
+    rectangle, rounded corners=3pt, draw=alAccent, fill=alSoft,
+    minimum height=1.1cm, minimum width=2.6cm, align=center,
+    font=\small\sffamily
+  },
+  al-svc/.style={
+    rectangle, rounded corners=3pt, draw=alPrimary, fill=white,
+    minimum height=1cm, minimum width=2.4cm, align=center,
+    font=\small\sffamily
+  },
+  al-store/.style={
+    cylinder, shape border rotate=90, aspect=0.3, draw=alMuted,
+    fill=alSoft!60, minimum height=1.3cm, minimum width=2cm,
+    align=center, font=\small\sffamily
+  },
+  al-flow/.style={-Latex, thick, draw=alPrimary!80},
+  al-flow-dashed/.style={-Latex, thick, dashed, draw=alMuted},
+}

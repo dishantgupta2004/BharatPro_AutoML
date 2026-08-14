@@ -1,0 +1,90 @@
+% ==================================================================
+% AutoLab — Project Report
+% Overleaf-compatible: pdflatex + bibtex + pdflatex + pdflatex
+% Root document: main.tex
+% ==================================================================
+\documentclass[a4paper,12pt,openright,twoside,final]{report}
+
+% ---- Preamble ---------------------------------------------------
+\input{preamble/packages}
+\input{preamble/styling}
+\input{preamble/commands}
+
+% ---- Bibliography style ----------------------------------------
+\bibliographystyle{plainnat}
+
+% ---- Metadata ---------------------------------------------------
+\hypersetup{
+  pdftitle={AutoLab: Conversational AutoML on the Model Context Protocol},
+  pdfauthor={AutoLab Project Report},
+  pdfkeywords={AutoML, MCP, Model Context Protocol, LLM agents, Streamlit,
+               Groq, scikit-learn, XGBoost, LightGBM, Optuna, SHAP},
+  pdfsubject={Automated machine learning platform driven by LLM tool-use}
+}
+
+\begin{document}
+
+% ---- Frontmatter -----------------------------------------------
+\frontmatter
+\pagestyle{plain}
+\pagenumbering{roman}
+
+\input{frontmatter/titlepage}
+\input{frontmatter/declaration}
+\input{frontmatter/certificate}
+\input{frontmatter/acknowledgement}
+\input{frontmatter/abstract}
+
+\cleardoublepage
+\phantomsection
+\addcontentsline{toc}{chapter}{Contents}
+\tableofcontents
+
+\cleardoublepage
+\phantomsection
+\addcontentsline{toc}{chapter}{List of Figures}
+\listoffigures
+
+\cleardoublepage
+\phantomsection
+\addcontentsline{toc}{chapter}{List of Tables}
+\listoftables
+
+\input{frontmatter/abbreviations}
+
+% ---- Mainmatter -------------------------------------------------
+\mainmatter
+\pagestyle{fancy}
+\pagenumbering{arabic}
+
+\input{chapters/01_introduction}
+\input{chapters/02_background}
+\input{chapters/03_literature_review}
+\input{chapters/04_problem_statement}
+\input{chapters/05_system_requirements}
+\input{chapters/06_system_architecture}
+\input{chapters/07_platform_design}
+\input{chapters/08_mcp_and_agent_architecture}
+\input{chapters/09_automl_pipeline}
+\input{chapters/10_implementation}
+\input{chapters/11_experiments_and_evaluation}
+\input{chapters/12_results_and_discussion}
+\input{chapters/13_youtube_demo_workflow}
+\input{chapters/14_limitations}
+\input{chapters/15_conclusion_and_future_directions}
+
+% ---- Appendices -------------------------------------------------
+\appendix
+\input{appendices/appendix_a_project_structure}
+\input{appendices/appendix_b_configuration}
+\input{appendices/appendix_c_api_and_tools}
+\input{appendices/appendix_d_reproducibility}
+\input{appendices/appendix_e_additional_results}
+
+% ---- Bibliography ----------------------------------------------
+\cleardoublepage
+\phantomsection
+\addcontentsline{toc}{chapter}{Bibliography}
+\bibliography{bibliography/references}
+
+\end{document}

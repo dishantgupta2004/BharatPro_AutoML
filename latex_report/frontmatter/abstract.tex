@@ -1,0 +1,52 @@
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+
+Automated machine learning (AutoML) systems automate parts of the data
+science workflow such as model selection, hyperparameter optimisation, and
+pipeline construction. Existing AutoML tools are typically either
+low-code graphical products that hide their engineering, or Python SDKs
+that assume expert operators. Neither approach is well matched to the way
+students and researchers actually interact with new datasets --- in an
+exploratory, conversational manner --- and neither produces a
+reproducible, readable, downloadable trace of the work.
+
+This project introduces \textbf{\projname}, a local, single-user,
+\emph{conversational} AutoML platform in which a large language model
+(LLM) acts as an autonomous copilot that plans and executes each stage of
+the machine-learning workflow by calling well-typed tools. Five in-process
+FastMCP microservices --- \svc{mcp-data}, \svc{mcp-eda},
+\svc{mcp-modeling}, \svc{mcp-explain}, and \svc{mcp-export} --- expose
+eleven tools covering data ingestion, pandera-based schema validation,
+exploratory analysis with automatic plot generation, a parallel
+scikit-learn/XGBoost/LightGBM ``bake-off'' with cross-validation, an
+Optuna hyperparameter sweep, SHAP-based explainability, and
+notebook/PDF export. All tools are aggregated into a unified catalog by
+an \code{MCPClientPool} that speaks the Model Context Protocol
+\citep{mcpSpec2024} directly in-process using \code{FastMCPTransport}.
+A Groq-hosted Llama~3.3~70B model \citep{llama3card, groq} drives the
+tool-calling loop, and a thin Streamlit front-end \citep{streamlit}
+provides upload, chat, and artefact-browsing interfaces.
+
+The design emphasises three principles: (i)~the LLM is only used for
+planning and language --- all numerical work is done by deterministic,
+inspectable Python code; (ii)~every artefact (chart, model, notebook,
+report) is materialised to a local, indexed filesystem and can be
+opened, downloaded, or re-executed without the platform running;
+and (iii)~each pipeline stage is an independently swappable MCP server,
+so new tools can be added without modifying the orchestrator or the UI.
+
+We describe the system architecture, MCP integration, tool schemas,
+orchestration loop, artefact registry, and Streamlit interface. We
+present the intended experimental protocol, discuss the limitations of
+the current implementation (single user, local storage, hallucination
+risk in tool selection, dependency footprint), and outline realistic
+future extensions such as multi-agent workflows, distributed training,
+experiment tracking, and a model registry.
+
+\vspace{0.5cm}
+\noindent\textbf{Keywords:} Automated Machine Learning, Model Context
+Protocol, Large Language Model Agents, Tool Use, Streamlit, Groq,
+scikit-learn, XGBoost, LightGBM, Optuna, SHAP, Reproducible Machine
+Learning.
+
+\clearpage

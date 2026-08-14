@@ -1,0 +1,88 @@
+\chapter{Additional Results (Templates)}
+\label{app:extra}
+
+This appendix hosts the numerical results that are produced when the
+protocol of Chapter~\ref{ch:experiments} is executed. All tables are
+intentionally left with placeholder cells so that the report remains
+truthful; users of the platform can fill them in after running the
+protocol.
+
+\section{Per-Dataset Leaderboards}
+\label{sec:per-dataset}
+
+\begin{table}[H]
+\centering
+\caption{Leaderboard template. Repeat one such table per dataset.}
+\label{tab:per-lb}
+\small
+\begin{tabularx}{\linewidth}{@{}rlXcccc@{}}
+\toprule
+\textbf{Rank} & \textbf{Model} & \textbf{Primary metric} & \textbf{CV mean} & \textbf{CV std} & \textbf{Test} & \textbf{Time (s)} \\
+\midrule
+1 & --- & --- & --- & --- & --- & --- \\
+2 & --- & --- & --- & --- & --- & --- \\
+3 & --- & --- & --- & --- & --- & --- \\
+4 & --- & --- & --- & --- & --- & --- \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{HPO Sweep Records}
+\label{sec:hpo-records}
+
+\begin{table}[H]
+\centering
+\caption{Optuna sweep template.}
+\label{tab:hpo}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Family} & \textbf{Trials} & \textbf{Best CV} & \textbf{Wall time (s)} \\
+\midrule
+RandomForest & --- & --- & --- \\
+XGBoost      & --- & --- & --- \\
+LightGBM     & --- & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Artefact Counts}
+\label{sec:artefact-counts}
+
+\begin{table}[H]
+\centering
+\caption{Artefact counts per dataset after a complete run.}
+\label{tab:artefacts}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{Dataset} & \textbf{plots} & \textbf{models} & \textbf{xtrain} & \textbf{notebooks} & \textbf{reports} \\
+\midrule
+Iris & --- & --- & --- & --- & --- \\
+Wine & --- & --- & --- & --- & --- \\
+Breast Cancer & --- & --- & --- & --- & --- \\
+Adult & --- & --- & --- & --- & --- \\
+California Housing & --- & --- & --- & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{LLM Behavioural Scores}
+\label{sec:llm-scores}
+
+\begin{table}[H]
+\centering
+\caption{LLM rubric (see Table~\ref{tab:llm-eval-rubric}) applied
+across a prompt suite of size $N$.}
+\label{tab:llm-scores}
+\begin{tabularx}{\linewidth}{@{}Xccccc@{}}
+\toprule
+\textbf{Dimension} & \textbf{Iris} & \textbf{Wine} & \textbf{Breast} & \textbf{Adult} & \textbf{Cal.\ Housing} \\
+\midrule
+Tool selection      & --- & --- & --- & --- & --- \\
+Argument fidelity   & --- & --- & --- & --- & --- \\
+Composition         & --- & --- & --- & --- & --- \\
+Result grounding    & --- & --- & --- & --- & --- \\
+Failure handling    & --- & --- & --- & --- & --- \\
+Formatting quality  & --- & --- & --- & --- & --- \\
+\bottomrule
+\end{tabularx}
+\end{table}

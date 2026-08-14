@@ -1,0 +1,196 @@
+\chapter{Conclusion and Future Directions}
+\label{ch:conclusion}
+
+\section{Summary of Contributions}
+\label{sec:sum-contrib}
+
+This report has described the design and implementation of
+\projname, a single-machine, local-first, conversational AutoML
+platform built on the Model Context Protocol. The concrete
+contributions are:
+
+\begin{enumerate}[leftmargin=1.4em]
+  \item A modular MCP server layout that decomposes a tabular
+        pipeline into five independent services and eleven typed
+        tools.
+  \item An in-process transport layer that removes HTTP overhead
+        while preserving the MCP protocol's discovery and
+        invocation semantics.
+  \item An orchestrator that reduces the LLM to a
+        \emph{scheduler}: it never fabricates numbers, only picks
+        tools and arguments and formats their results.
+  \item A filesystem artefact registry that gives every generated
+        file a UUID, a category, and searchable metadata.
+  \item A thin Streamlit UI that is a client of the orchestrator
+        and can be replaced without touching the ML code.
+\end{enumerate}
+
+\section{Findings}
+\label{sec:findings}
+
+The end-to-end smoke of the pipeline confirms three important
+findings.
+
+\paragraph{The MCP contract is enough.}
+A typed tool schema plus a docstring is sufficient information for
+current-generation LLMs to plan multi-step workflows. There is no
+need for a bespoke protocol on top of MCP for a research-scale
+platform.
+
+\paragraph{Deterministic-first works.}
+Restricting the LLM to plan-and-format decisions --- and letting
+Python do every calculation --- keeps the platform trustworthy. The
+user never has to wonder whether a metric was computed or
+hallucinated.
+
+\paragraph{Local-first pays off.}
+Removing Supabase, authentication, cloud storage, and the Next.js
+frontend cut the surface area by more than half and made the
+platform tractable for a single-author project without sacrificing
+any pipeline capability.
+
+\section{Future Directions}
+\label{sec:future}
+
+The following extensions are natural next steps. Each is labelled
+\propd{} if a small effort would deliver it, or \future{} for
+larger research or engineering programs.
+
+\subsection{AutoML Depth}
+\label{sec:future-automl}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \propd{} Add CatBoost \citep{prokhorenkova2018catboost} as a
+        fifth bake-off candidate.
+  \item \propd{} Add stacking (\code{StackingClassifier} /
+        \code{StackingRegressor} \citep{sklearn2011}) as a
+        post-bake-off step.
+  \item \future{} Integrate deep tabular models (TabNet
+        \citep{arik2021tabnet}, FT-Transformer
+        \citep{gorishniy2021revisiting}) as optional candidates
+        behind a flag.
+  \item \future{} Add multi-fidelity HPO (Hyperband
+        \citep{li2017hyperband}, BOHB \citep{falkner2018bohb}).
+  \item \future{} Feature engineering search
+        (Featuretools-style \citep{kanter2015dsm}, LLM-driven CAAFE
+        \citep{hollmann2024caafe}).
+\end{itemize}
+
+\subsection{Agent Sophistication}
+\label{sec:future-agent}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \propd{} Add ReAct-style scratchpad
+        \citep{yao2023react} to the system prompt for better
+        multi-step reasoning.
+  \item \propd{} Add self-consistency
+        \citep{wang2023self-consistency} on tool argument
+        generation.
+  \item \future{} Multi-agent workflows
+        \citep{wu2023autogen, hong2024metagpt}: a Planner that
+        proposes a DAG of tool calls and a Critic that reviews
+        results before final response.
+  \item \future{} Retrieval-augmented tool selection over a larger
+        catalog \citep{patil2023gorilla, qin2024toolllm}.
+\end{itemize}
+
+\subsection{Reproducibility and MLOps}
+\label{sec:future-mlops}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \propd{} Record a SHA-256 hash of every uploaded dataset in
+        \code{DatasetRecord} and expose it as an artefact metadata
+        field.
+  \item \propd{} Store leaderboards in a small SQLite database so
+        that historical bake-offs can be queried.
+  \item \future{} Integrate with MLflow \citep{mlflow} or Weights
+        \& Biases \citep{wandb} for experiment tracking and model
+        registry semantics.
+  \item \future{} Emit OpenTelemetry \citep{opentelemetry} traces
+        for every tool call to enable proper observability.
+\end{itemize}
+
+\subsection{Deployment and Scaling}
+\label{sec:future-deploy}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \propd{} Provide a minimal \file{Dockerfile} that installs
+        \file{requirements.txt} and exposes the Streamlit port.
+  \item \future{} Split each MCP server into its own process
+        (or container) and re-transport them over Streamable HTTP
+        \citep{mcpSpec2024} so they can scale independently.
+  \item \future{} Add a job queue (Redis / RQ or Celery
+        \citep{celery}) so long-running bake-offs do not block the
+        UI thread.
+  \item \future{} Cloud deployment templates for AWS ECS, Google
+        Cloud Run, or Kubernetes.
+\end{itemize}
+
+\subsection{Human-in-the-Loop and Guard-rails}
+\label{sec:future-hitl}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \propd{} Add a ``dry-run'' mode in which the LLM emits a
+        plan of tool calls that the user must approve before
+        execution.
+  \item \propd{} Add a policy layer that inspects tool arguments
+        (e.g.\ reject \code{target\_column} values that do not
+        exist).
+  \item \future{} Prompt-injection defence: separate tool results
+        into a distinct message channel and re-anchor the system
+        prompt on every turn.
+\end{itemize}
+
+\subsection{Broader Data Modalities}
+\label{sec:future-modality}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \future{} Time-series support (statsforecast
+        \citep{statsforecast}, sktime \citep{sktime}).
+  \item \future{} Text classification with sentence-transformers
+        \citep{reimers2019sbert}.
+  \item \future{} Image classification via torchvision-style
+        pipelines.
+  \item \future{} Multimodal LLM-driven captioning of generated
+        plots for accessibility.
+\end{itemize}
+
+\subsection{Ecosystem Integration}
+\label{sec:future-ecosystem}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \propd{} Expose the MCP servers over stdio as well as
+        in-process so that Claude Desktop and other MCP hosts can
+        use them.
+  \item \propd{} Expose MCP resources for the artefact catalog so
+        that any MCP client can \code{ReadResource} the leaderboard
+        or the champion metadata.
+  \item \future{} Publish the MCP servers as a stand-alone package
+        that other AutoML front-ends can consume.
+\end{itemize}
+
+\subsection{Benchmarking}
+\label{sec:future-bench}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \propd{} Automated CI job that runs the protocol of
+        Chapter~\ref{ch:experiments} on all six datasets and posts
+        the resulting Markdown table as a comment on every PR.
+  \item \future{} Compare \projname{} against AutoGluon
+        \citep{erickson2020autogluon}, Auto-sklearn
+        \citep{feurer2015autosklearn}, and TPOT
+        \citep{olson2016tpot} on OpenML CC-18 benchmarks
+        \citep{bischl2021openml}.
+\end{itemize}
+
+\section{Closing Remarks}
+\label{sec:closing}
+
+Conversational, agentic interfaces to data science are neither a
+substitute for statistical intuition nor a solution to the
+underlying difficulty of applied ML. What they can do, when
+carefully designed, is lower the activation energy for someone who
+has intuition but has not yet internalised the API surface --- and
+give that person a clean, inspectable, downloadable record of
+everything the platform did. \projname{} is a small step in this
+direction, built to be extended.

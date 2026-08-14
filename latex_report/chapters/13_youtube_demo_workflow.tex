@@ -1,0 +1,217 @@
+\chapter{End-to-End Demonstration Workflow}
+\label{ch:demo}
+
+This chapter maps a single complete run of \projname{} onto a
+recording-friendly workflow suitable for a project demonstration
+video (e.g.\ a YouTube walkthrough). Every step below refers to a
+capability already implemented in the repository; placeholder figure
+frames are marked \emph{[SCREENSHOT]} so that they can be replaced
+with real captures without changing the narrative.
+
+\section{Demo Objectives}
+\label{sec:demo-obj}
+
+The demonstration should convince a viewer that:
+
+\begin{enumerate}[leftmargin=1.4em]
+  \item The platform runs entirely on a laptop with no cloud
+        account.
+  \item A user can go from raw CSV to reproducible notebook + PDF
+        in a single natural-language turn.
+  \item The tool trace is fully inspectable.
+  \item Every artefact is on the local filesystem and can be opened
+        outside the app.
+\end{enumerate}
+
+\section{Pre-Recording Checklist}
+\label{sec:pre-record}
+
+Before starting the screen recorder:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item Confirm \file{.env} contains a valid \code{GROQ\_API\_KEY}.
+  \item Empty \file{data/uploads/} and \file{data/artifacts/}
+        (leaving only the \file{.gitkeep} sentinels).
+  \item Prepare one small classification dataset (Iris or Breast
+        Cancer) and one regression dataset (California Housing) in a
+        known folder.
+  \item Have a browser window sized to 1280$\times$800 for a clean
+        capture.
+\end{itemize}
+
+\section{Demo Architecture}
+\label{sec:demo-arch}
+
+Figure~\ref{fig:demo-arch} shows the deployment topology that the
+viewer will see. It is intentionally identical to
+Figure~\ref{fig:high-level}; the emphasis for the video is on the
+locality of everything except the Groq call.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=0.6cm and 1cm, font=\small\sffamily]
+  \node[al-node, minimum width=3.5cm] (br) {Browser};
+  \node[al-node, right=of br, minimum width=4cm]
+                                                (st) {Streamlit @ 8501};
+  \node[al-node, right=of st, minimum width=4cm]
+                                                (py) {Python process \\ (pool + tools)};
+  \node[al-store, below=of st, minimum width=3.5cm]
+                                                (fs) {data/};
+  \node[al-node, right=1.4cm of py, fill=alAccent!15, minimum width=3cm]
+                                                (llm) {Groq API};
+
+  \draw[al-flow, <->] (br) -- (st);
+  \draw[al-flow, <->] (st) -- (py);
+  \draw[al-flow, <->] (py.south) |- (fs.east);
+  \draw[al-flow, <->] (py) -- (llm);
+\end{tikzpicture}
+\caption{Deployment for the demonstration recording.}
+\label{fig:demo-arch}
+\end{figure}
+
+\section{Step-by-Step Walkthrough}
+\label{sec:walkthrough}
+
+The recommended script is a \textbf{5-minute} demonstration divided
+into eight beats.
+
+\subsection*{Beat 1 (0:00--0:30) --- Launch}
+Show a terminal executing
+\begin{lstlisting}[style=alBash, numbers=none]
+streamlit run app/streamlit_app.py
+\end{lstlisting}
+and highlight the ``Pool ready (in-process): 5/5 services online, 11
+unified tools'' log line. Cut to the browser at
+\url{http://localhost:8501}.
+
+\begin{figure}[H]
+\centering
+\fbox{\begin{minipage}{0.9\linewidth}\centering\vspace{6em}
+\emph{[SCREENSHOT 1: Streamlit landing page with sidebar showing all
+five services in green.]}\vspace{6em}\end{minipage}}
+\caption{Landing screen with service health.}
+\label{fig:demo-1}
+\end{figure}
+
+\subsection*{Beat 2 (0:30--1:00) --- Upload a dataset}
+Drag Iris CSV into the sidebar uploader. Show the success toast and
+the ``Active dataset'' selector automatically switching to the new
+file.
+
+\begin{figure}[H]
+\centering
+\fbox{\begin{minipage}{0.9\linewidth}\centering\vspace{6em}
+\emph{[SCREENSHOT 2: Sidebar showing iris.csv selected as active,
+services still green.]}\vspace{6em}\end{minipage}}
+\caption{Post-upload sidebar.}
+\label{fig:demo-2}
+\end{figure}
+
+\subsection*{Beat 3 (1:00--1:45) --- Ask for EDA}
+In the chat, type:
+\begin{quote}
+\emph{``Run a full EDA on my data and summarise what stands out.''}
+\end{quote}
+Show the tool activity ribbon --- \tool{ingest\_dataset} then
+\tool{run\_full\_eda} --- and the assistant's summary paragraphs.
+Expand the tool-call cards to reveal the arguments and the JSON
+result.
+
+\begin{figure}[H]
+\centering
+\fbox{\begin{minipage}{0.9\linewidth}\centering\vspace{6em}
+\emph{[SCREENSHOT 3: Chat with EDA tool cards expanded and a
+correlation heatmap rendered.]}\vspace{6em}\end{minipage}}
+\caption{EDA response with expanded tool cards.}
+\label{fig:demo-3}
+\end{figure}
+
+\subsection*{Beat 4 (1:45--2:45) --- Train a model}
+Type:
+\begin{quote}
+\emph{``Now train a model to predict Species and show me the
+leaderboard.''}
+\end{quote}
+Show the live progress indicator counting up as
+\tool{run\_parallel\_bake\_off} completes, then the assistant's
+leaderboard summary. Emphasise that the champion is reported
+verbatim from the tool result, not fabricated.
+
+\subsection*{Beat 5 (2:45--3:15) --- Explain the model}
+Type:
+\begin{quote}
+\emph{``Explain the champion --- which features matter most?''}
+\end{quote}
+Depending on the champion, the LLM will call either
+\tool{calculate\_shap\_values} or
+\tool{generate\_feature\_importance\_plot}. Show the resulting
+importance plot inline.
+
+\subsection*{Beat 6 (3:15--3:45) --- Generate a notebook + PDF}
+Type:
+\begin{quote}
+\emph{``Generate a Jupyter notebook that reproduces this pipeline
+and a PDF report of the results.''}
+\end{quote}
+Show \tool{generate\_jupyter\_notebook} and
+\tool{compile\_pdf\_report} firing.
+
+\subsection*{Beat 7 (3:45--4:30) --- Browse artefacts}
+Switch to the \emph{Artifacts} tab. Show the filter chips, the
+image previews for the plots, the parquet dataframe preview for the
+\code{xtrain\_sample}, and the download buttons.
+
+\begin{figure}[H]
+\centering
+\fbox{\begin{minipage}{0.9\linewidth}\centering\vspace{6em}
+\emph{[SCREENSHOT 4: Artifacts tab showing at least six artefacts
+across the plots, model, notebook, and report categories.]}\vspace{6em}\end{minipage}}
+\caption{Artefacts tab after a full run.}
+\label{fig:demo-4}
+\end{figure}
+
+\subsection*{Beat 8 (4:30--5:00) --- Open the downloads}
+Cut to the OS file explorer showing \file{data/artifacts/plots/},
+\file{data/artifacts/models/}, \file{data/artifacts/notebooks/},
+and \file{data/artifacts/reports/}. Open the generated
+\file{.ipynb} in Jupyter to prove it is executable, and the PDF in
+a viewer to prove the leaderboard is present.
+
+\section{Expected Terminal Output}
+\label{sec:terminal-output}
+
+For reference, the truncated log for a complete run resembles the
+following (elided for brevity):
+
+\begin{lstlisting}[style=alBash, numbers=none]
+mcp.pool | Pool ready (in-process): 5/5 services online, 11 unified tools
+mcp_data | Processing request of type CallToolRequest    # ingest
+workspace | Artifact saved: kind=plot id=...             # correlation matrix
+workspace | Artifact saved: kind=plot id=...             # distributions
+workspace | Artifact saved: kind=plot id=...             # missing values
+mcp_data | Processing request of type CallToolRequest    # bake-off
+context.py Sending INFO to client: Detected problem type: classification
+context.py Sending INFO to client: Training 4 models in parallel
+context.py Sending INFO to client: Champion: LightGBM
+workspace | Artifact saved: kind=model id=...
+workspace | Artifact saved: kind=xtrain_sample id=...
+workspace | Artifact saved: kind=plot id=...             # SHAP summary
+workspace | Artifact saved: kind=training_notebook id=...
+workspace | Artifact saved: kind=pdf_report id=...
+\end{lstlisting}
+
+\section{Post-Recording Editing Notes}
+\label{sec:post-record}
+
+Recommendations for the video edit:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item Overlay the assistant's summary paragraphs at $1.5\times$
+        playback while narrating; the raw generation speed varies
+        with Groq load.
+  \item Highlight the ``\code{artifact\_id}'' fields in the tool
+        result to show that every artefact has a stable identifier.
+  \item Show the size of \file{data/artifacts/\_index.json} growing
+        after each artefact save --- this makes the registry
+        tangible.
+\end{itemize}

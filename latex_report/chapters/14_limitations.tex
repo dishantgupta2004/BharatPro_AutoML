@@ -1,0 +1,190 @@
+\chapter{Limitations}
+\label{ch:limitations}
+
+This chapter states the limitations of \projname{} honestly. Each
+item is either an intentional trade-off, a scope decision, or an
+open technical issue. Every claim in this chapter is verifiable from
+the current repository.
+
+\section{Data Modality Limitations}
+\label{sec:lim-data}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{Tabular only.} The pipeline assumes rectangular
+        pandas-friendly data. Text, images, audio, time series,
+        and graphs are out of scope.
+  \item \textbf{Single-file datasets.} Multi-table joins, relational
+        databases, and streaming data are not supported.
+  \item \textbf{Memory-bound.} Datasets are loaded whole with
+        \code{pandas.read\_csv} or \code{read\_parquet}. Extremely
+        wide or extremely long datasets can exhaust RAM before the
+        upload cap is reached.
+\end{itemize}
+
+\section{Compute Limitations}
+\label{sec:lim-compute}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{CPU only.} The recommended install path does not
+        include GPU-enabled builds of XGBoost or LightGBM. Users can
+        install them separately, but no CUDA integration is provided
+        out of the box.
+  \item \textbf{No distributed training.} Bake-off parallelism is
+        limited to a single machine and $\le 4$ candidate threads.
+  \item \textbf{Single-process Optuna.} The sweep runs with
+        \code{n\_jobs=1} at the study level to keep bookkeeping
+        simple; multi-process TPE requires shared storage.
+\end{itemize}
+
+\section{Model and Algorithm Limitations}
+\label{sec:lim-models}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{Fixed candidate set.} The bake-off compares only
+        RandomForest, XGBoost, LightGBM, and a linear baseline
+        (LogisticRegression or Ridge). Stacking, blending, deep
+        tabular models (e.g.\ TabNet, FT-Transformer), and
+        CatBoost are not currently included.
+  \item \textbf{No feature engineering search.} Preprocessing is a
+        fixed \code{ColumnTransformer}; feature interactions,
+        target encoders, and count encoders are not attempted.
+  \item \textbf{No calibration or thresholding.} Classification
+        outputs are point predictions; probability calibration and
+        threshold tuning are not performed.
+  \item \textbf{Uni-target regression / classification only.}
+        Multi-label, multi-target, and hierarchical tasks are not
+        supported.
+\end{itemize}
+
+\section{Agent Reliability and Hallucination}
+\label{sec:lim-hallucination}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{Wrong tool selection.} The LLM may occasionally
+        choose the wrong tool, e.g.\ calling
+        \tool{run\_parallel\_bake\_off} without confirming the
+        target column when it should have asked.
+  \item \textbf{Argument fabrication.} Free-form arguments such as
+        \code{target\_column} are constructed by the LLM. If the
+        user's phrasing is ambiguous, the LLM may invent a plausible
+        column name; this is why the modeling tool now returns a
+        friendly error listing the actual columns
+        (Section~\ref{sec:qual-results}).
+  \item \textbf{Result misinterpretation.} The LLM may summarise
+        tool results incorrectly. This is mitigated by expandable
+        tool-call cards in the UI so the user can inspect raw JSON.
+  \item \textbf{Iteration ceiling.} Long compound tasks may hit the
+        default \code{MAX\_TOOL\_ITERATIONS=8} limit before
+        completing; the platform will end with a plain-text apology
+        rather than an error.
+\end{itemize}
+
+\section{Scalability Limitations}
+\label{sec:lim-scale}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{Single user.} There is no user identity, no
+        per-user directory, and no access control. Multi-tenant
+        deployment would require reintroducing an auth layer and a
+        per-user workspace.
+  \item \textbf{Streamlit re-runs.} Streamlit re-runs the whole
+        script on every widget event; long tool outputs are
+        re-rendered on each re-run.
+  \item \textbf{No horizontal scaling.} There is no queue, no
+        worker process pool, and no orchestration for concurrent
+        chat sessions.
+\end{itemize}
+
+\section{Security Limitations}
+\label{sec:lim-security}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{No sandboxing of pandas.} Uploaded files are parsed
+        with \code{pandas.read\_csv}, which is safe against arbitrary
+        code execution but is exposed to CSV injection into
+        downstream tools that consume string values.
+  \item \textbf{Attacker-influenced tool results.} Data-derived
+        strings are echoed back to the LLM and could contain
+        prompt-injection payloads. Mitigation: raw tool results are
+        visible in the UI; the platform is not run unattended.
+  \item \textbf{Secrets in \file{.env}.} The API key is stored in
+        plain text in the working directory. Users should treat
+        \file{.env} as sensitive and keep it out of version
+        control (the \file{.gitignore} already excludes it).
+\end{itemize}
+
+\section{Reproducibility Limitations}
+\label{sec:lim-repro}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{LLM non-determinism.} Even at low temperature,
+        Groq's streaming responses vary run to run; the prose is
+        not byte-reproducible.
+  \item \textbf{Provider drift.} A Groq-side update to
+        \code{llama-3.3-70b-versatile} would change behaviour
+        without any change in the local repository.
+  \item \textbf{No dataset hash.} The platform does not currently
+        record a hash of the uploaded dataset. Recomputing artefacts
+        after a data change is silent.
+\end{itemize}
+
+\section{Dependency Footprint}
+\label{sec:lim-deps}
+
+The dependency list (Table~\ref{tab:deps}) is heavy for a research
+tool: scikit-learn, XGBoost, LightGBM, SHAP, Optuna, matplotlib, and
+ReportLab together account for hundreds of megabytes when installed.
+This is intentional --- the platform's value proposition is a
+batteries-included pipeline --- but it does mean that installation
+is not instantaneous and that Docker images built naively will be
+sizable.
+
+\begin{table}[H]
+\centering
+\caption{Runtime dependencies of \projname{} and their purpose.
+Every entry is a direct import in the code.}
+\label{tab:deps}
+\small
+\begin{tabularx}{\linewidth}{@{}lXl@{}}
+\toprule
+\textbf{Package} & \textbf{Purpose in \projname} & \textbf{Category} \\
+\midrule
+streamlit & UI                              & UI \\
+fastmcp   & MCP servers + in-process transport & Protocol \\
+groq      & Chat Completions API client     & LLM \\
+numpy, pandas, pyarrow & Data handling      & Data \\
+scikit-learn & Preprocessing + ML pipeline  & ML \\
+scipy     & Statistical helpers             & ML \\
+xgboost, lightgbm & Gradient boosting       & ML \\
+shap      & Explainability                  & ML \\
+optuna    & Hyperparameter search           & ML \\
+pandera   & Schema validation               & Data \\
+matplotlib & Plot rendering                 & Viz \\
+reportlab & PDF generation                  & Export \\
+pydantic, pydantic-settings & Typed config  & Config \\
+python-dotenv & \file{.env} loading         & Config \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Architectural Limitations}
+\label{sec:lim-arch}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{No message persistence.} Chat history is held in
+        Streamlit session state; a page refresh loses it. The
+        earlier prototype (removed during migration) persisted
+        conversations in a database.
+  \item \textbf{No MCP resource endpoints.} The MCP protocol
+        supports resources (addressable read-only content) but the
+        current servers expose none.
+  \item \textbf{No observability stack.} There is no Prometheus
+        exporter, no tracing (OpenTelemetry), and no structured
+        JSON log output. Only stderr logs are produced.
+  \item \textbf{No CI/CD.} There is no automated build, lint, or
+        test in the repository.
+\end{itemize}
+
+Every limitation above is addressed as future work in
+Chapter~\ref{ch:conclusion}, either as a small extension or as a
+clearly-labelled research direction.

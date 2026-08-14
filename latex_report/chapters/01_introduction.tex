@@ -1,0 +1,241 @@
+\chapter{Introduction}
+\label{ch:intro}
+
+\chapquote{``The best interface is no interface until you need one.''}{Anonymous UX aphorism}
+
+\section{Motivation}
+\label{sec:motivation}
+
+Modern machine learning (ML) has produced spectacular headline results
+in image recognition, natural-language processing, generative modelling,
+and scientific discovery. However, the day-to-day experience of a
+student, applied researcher, or first-year data engineer confronted with
+a new tabular dataset is far less glamorous. Even relatively small
+projects require the practitioner to (i)~load and profile the data,
+(ii)~identify and encode categorical variables, (iii)~engineer missing
+values, (iv)~pick a family of models, (v)~configure and search
+hyperparameters, (vi)~compare candidates on a validation split with a
+sensible metric, (vii)~inspect feature importance and residuals, and
+(viii)~produce a reproducible record of what was done.
+Each of these steps has well-established best practices, and each is
+easy to get subtly wrong. Automated Machine Learning (AutoML) systems
+\citep{feurer2015autosklearn, olson2016tpot, ledell2020h2o, jin2019autokeras}
+were introduced to reduce the cognitive load of these repeated
+decisions and to make sensible defaults available to non-experts.
+
+Meanwhile, the recent generation of instruction-tuned large language
+models (LLMs) --- exemplified by the GPT family
+\citep{brown2020gpt3, openai2023gpt4}, the Llama family
+\citep{touvron2023llama, llama3card}, and the Claude family --- has
+demonstrated a striking ability to plan and to invoke external ``tools''
+in response to natural-language requests
+\citep{schick2023toolformer, yao2023react, patil2023gorilla,
+openai2023function}. The Model Context Protocol (MCP)
+\citep{mcpSpec2024, anthropic2024mcp} standardises how such tools are
+discovered, described, and invoked, which makes it feasible to expose
+an entire application's capabilities as an inspectable tool catalog
+that an LLM can drive.
+
+The intersection of these two trends is the design space explored by
+this project: an AutoML platform whose \emph{interface} is a
+conversation, whose \emph{implementation} is deterministic Python, and
+whose \emph{contract with the LLM} is a well-typed MCP tool schema.
+
+\section{Evolution of AutoML}
+\label{sec:evolution-automl}
+
+Automated machine learning has traversed several distinct generations:
+
+\begin{itemize}[leftmargin=1.3em]
+  \item \textbf{First generation --- hyperparameter search.} Grid search
+        and random search over a small number of scikit-learn
+        \citep{sklearn2011} hyperparameters, often driven by
+        \code{GridSearchCV} in a notebook. Random search is a
+        surprisingly strong baseline \citep{bergstra2012random}.
+  \item \textbf{Second generation --- Bayesian and evolutionary
+        pipeline search.} Systems such as Auto-WEKA
+        \citep{thornton2013autoweka}, Auto-sklearn
+        \citep{feurer2015autosklearn}, and TPOT \citep{olson2016tpot}
+        automated pipeline construction using Bayesian optimisation
+        (SMAC \citep{hutter2011smac}) or genetic programming, and
+        popularised the idea of a ``leaderboard'' of pipelines.
+  \item \textbf{Third generation --- boosting-first AutoML and neural
+        architecture search.} H2O AutoML \citep{ledell2020h2o},
+        AutoGluon \citep{erickson2020autogluon}, and Auto-Keras
+        \citep{jin2019autokeras} placed gradient-boosted trees and
+        stacked ensembles at the centre of tabular AutoML while NAS
+        systems \citep{zoph2017nas, real2019regularized} attacked deep
+        image and language models. Modern gradient boosters
+        \citep{chen2016xgboost, ke2017lightgbm, prokhorenkova2018catboost}
+        remain the state of the art on tabular data.
+  \item \textbf{Fourth generation --- efficient hyperparameter
+        optimisation.} Optuna \citep{akiba2019optuna} popularised
+        define-by-run search spaces and TPE
+        \citep{bergstra2011algorithms} sampling with pruning; Hyperband
+        \citep{li2017hyperband} and BOHB \citep{falkner2018bohb}
+        introduced multi-fidelity approaches.
+  \item \textbf{Fifth generation --- agentic and conversational
+        AutoML.} A very recent line of work
+        \citep{hollmann2024caafe, guo2024dsagents} uses LLMs to plan
+        and execute portions of the ML pipeline. The
+        \emph{platform} described here belongs to this fifth
+        generation.
+\end{itemize}
+
+\section{Problem Being Addressed}
+\label{sec:problem-addressed}
+
+Even with all of the above tools, an important gap remains:
+
+\begin{quote}
+\emph{There is no lightweight, single-user, open, reproducible platform
+that lets a researcher upload a CSV, describe the intent in natural
+language, and receive back a Jupyter notebook, a trained model, a set
+of plots, and a PDF report --- with a clear, inspectable record of
+every tool the system called, every argument it used, and every artefact
+it produced.}
+\end{quote}
+
+Commercial vendors offer end-to-end products but hide their engineering
+and require accounts, API keys, and network egress. Research systems
+such as Auto-sklearn \citep{feurer2015autosklearn} and AutoGluon
+\citep{erickson2020autogluon} are excellent SDKs but not products
+--- they lack a chat interface and a reproducible artefact story.
+LLM ``agents'' such as ChatGPT's code interpreter can execute Python
+but their tool catalog is monolithic and not easily extensible by a
+third party. \projname{} fills this gap.
+
+\section{Why Conversational, Agentic AutoML is Useful}
+\label{sec:why-agentic}
+
+Three properties of conversational, tool-using AutoML are attractive
+for the target user:
+
+\begin{enumerate}[leftmargin=1.4em]
+  \item \textbf{Low activation energy.} A student can upload a CSV and
+        write ``run a full EDA'' without recalling scikit-learn API
+        surface. The LLM handles the mapping from intent to tool
+        invocation.
+  \item \textbf{Auditable execution.} Unlike a black-box AutoML SaaS,
+        every tool call, argument, and result is displayed inline and
+        stored, so a reviewer can reproduce the run manually.
+  \item \textbf{Cheap extensibility.} Adding a new capability (e.g.\ a
+        new plot type, a new estimator, a new report format) is a
+        matter of adding a decorated function to one of the MCP
+        servers --- no orchestrator changes and no front-end changes
+        are required.
+\end{enumerate}
+
+\section{Project Motivation}
+\label{sec:project-motivation}
+
+The specific motivation for building \projname{} was the observation
+that \emph{first-year data-science students frequently produce
+technically correct but conceptually shallow analyses} because they
+do not know which questions to ask. A conversational tool that models
+those questions --- ``what does the target column look like?'', ``are
+any features strongly correlated?'', ``which model wins on this
+dataset?'', ``why does it win?'' --- can, if designed carefully,
+teach as it works.
+
+A second motivation was that the Model Context Protocol
+\citep{mcpSpec2024} had matured to a point where a rich, in-process
+tool catalog could be built with a single Python dependency (FastMCP
+\citep{fastmcp}), without any HTTP plumbing or authentication layers.
+This made a research-grade prototype feasible for a single-author
+project.
+
+\section{Objectives}
+\label{sec:objectives}
+
+The concrete objectives of the project are:
+
+\begin{enumerate}[leftmargin=1.4em]
+  \item Design and implement a modular, in-process MCP server layout
+        that covers the core stages of a tabular AutoML workflow ---
+        ingestion, validation, EDA, training, explainability, export.
+  \item Implement an LLM-driven orchestrator that unifies the tools
+        into a single catalog and routes tool calls to the correct
+        server, with support for streaming responses and per-tool
+        progress updates.
+  \item Provide a filesystem-based artefact registry that records every
+        generated file with a stable identifier, a category, and
+        arbitrary metadata.
+  \item Build a thin Streamlit front-end that supports upload, chat,
+        and artefact browsing while remaining a client of the same
+        orchestration API that is used programmatically.
+  \item Produce a project report that documents the architecture, the
+        MCP integration, and the AutoML pipeline in enough detail to
+        allow future contributors to extend the platform.
+\end{enumerate}
+
+\section{Contributions}
+\label{sec:contributions}
+
+The specific contributions of this work are:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item An \emph{end-to-end, single-machine} AutoML platform built on
+        MCP whose five services and eleven tools cover the tabular
+        workflow from raw CSV to PDF report.
+  \item An \emph{in-process transport} for the MCP client--server
+        protocol that eliminates HTTP overhead while preserving the
+        protocol's tool discovery, invocation, and progress semantics.
+  \item A \emph{deterministic-first} design in which the LLM plans
+        and formats but never computes: numerical results always
+        originate from Python code.
+  \item A \emph{filesystem artefact registry} that is trivial to
+        version-control, inspect, and reset, and that decouples
+        artefact generation from any storage vendor.
+  \item A reference implementation, in $\approx$2\,600 lines of
+        Python plus a Streamlit UI, that can serve as an educational
+        substrate for further research on agentic data science.
+\end{itemize}
+
+\section{Scope}
+\label{sec:scope}
+
+This report is scoped to the current state of the repository
+\file{automl-mcp-platform}, in which the platform:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item Runs on a \textbf{single machine} for a \textbf{single user};
+        multi-tenancy has been intentionally removed.
+  \item Handles \textbf{tabular} data in CSV, TSV, or Parquet format;
+        image, text, and multimodal data are out of scope.
+  \item Uses the \textbf{Groq} Chat Completions API as the LLM backend;
+        other providers are supported in principle via the standard
+        OpenAI-compatible schema but are not tested.
+  \item Persists artefacts on the \textbf{local filesystem} under
+        \file{data/}; no cloud storage or database is used.
+  \item Provides two entry points: a \textbf{Streamlit UI} for
+        interactive use and a small \textbf{Python API}
+        (\code{orchestrator.stream\_chat}) for programmatic use.
+\end{itemize}
+
+\section{Report Organization}
+\label{sec:report-org}
+
+The remainder of this report is organised as follows.
+Chapter~\ref{ch:background} reviews the technical foundations of
+AutoML, MCP, and LLM tool use.
+Chapter~\ref{ch:litreview} surveys the academic literature relevant to
+the design.
+Chapter~\ref{ch:problem} formalises the problem and requirements.
+Chapter~\ref{ch:requirements} enumerates functional and non-functional
+requirements.
+Chapter~\ref{ch:arch} presents the system architecture.
+Chapter~\ref{ch:design} discusses the platform design in module-level
+detail.
+Chapter~\ref{ch:mcp} focuses specifically on the MCP integration and
+the agent decision flow.
+Chapter~\ref{ch:pipeline} traces the end-to-end AutoML pipeline.
+Chapter~\ref{ch:impl} presents key implementation excerpts.
+Chapter~\ref{ch:experiments} defines the experimental protocol and
+Chapter~\ref{ch:results} discusses the results.
+Chapter~\ref{ch:demo} maps a complete run onto a YouTube-style
+demonstration.
+Chapter~\ref{ch:limitations} states the honest limitations, and
+Chapter~\ref{ch:conclusion} concludes and discusses future directions.
+Appendices provide the project structure, configuration reference,
+tool signatures, reproducibility notes, and additional results.

@@ -1,0 +1,276 @@
+\chapter{Background and Technical Foundations}
+\label{ch:background}
+
+This chapter reviews the technical concepts that underpin \projname.
+Only the ideas that are actually used in the implementation are
+covered, at the depth required to make the design decisions in later
+chapters legible.
+
+\section{The Machine Learning Workflow}
+\label{sec:ml-workflow}
+
+A canonical supervised learning problem is defined as follows. Given a
+dataset $\mathcal{D}=\{(x_i, y_i)\}_{i=1}^{n}$ with features
+$x_i \in \mathcal{X}$ and targets $y_i \in \mathcal{Y}$ drawn i.i.d.\
+from an unknown distribution $\mathbb{P}(X,Y)$, we seek a function
+$f:\mathcal{X}\to\mathcal{Y}$ that minimises the expected loss
+\begin{equation}
+  \mathcal{R}(f) \;=\; \mathbb{E}_{(x,y)\sim\mathbb{P}}\big[\ell(f(x), y)\big],
+  \label{eq:risk}
+\end{equation}
+for a task-appropriate loss $\ell$ \citep{vapnik1998statistical}.
+Empirical risk minimisation approximates \eqref{eq:risk} on the
+training set,
+\begin{equation}
+  \hat{f} \;=\; \arg\min_{f\in\mathcal{F}}\;
+  \frac{1}{n}\sum_{i=1}^{n} \ell(f(x_i), y_i),
+  \label{eq:erm}
+\end{equation}
+and uses regularisation, cross-validation, and held-out evaluation to
+control generalisation error \citep{hastie2009elements}.
+
+An end-to-end applied workflow consists of the stages shown in
+Table~\ref{tab:ml-stages}. \projname{} exposes each stage as one or
+more tools inside an MCP server.
+
+\begin{table}[H]
+\centering
+\caption{Canonical stages of a tabular supervised-learning workflow
+and the corresponding \projname{} tools.}
+\label{tab:ml-stages}
+\begin{tabularx}{\linewidth}{@{}lXl@{}}
+\toprule
+\textbf{Stage} & \textbf{Purpose} & \textbf{Tool in \projname} \\
+\midrule
+Ingestion & Read file, detect format, report shape/dtypes & \tool{ingest\_dataset} \\
+Validation & Enforce schema, detect anomalies & \tool{validate\_schema\_with\_pandera} \\
+EDA & Descriptive statistics, correlations, distributions & \tool{run\_full\_eda}, \tool{render\_correlation\_matrix} \\
+Splitting \& CV & Train/test split, K-fold CV & inside \tool{run\_parallel\_bake\_off} \\
+Training \& selection & Fit candidates, pick champion & \tool{run\_parallel\_bake\_off} \\
+Tuning & Hyperparameter search & \tool{trigger\_hyperparameter\_sweep} \\
+Explanation & Global feature attributions & \tool{calculate\_shap\_values}, \tool{generate\_feature\_importance\_plot} \\
+Export & Reproducible notebook + PDF report & \tool{generate\_jupyter\_notebook}, \tool{compile\_pdf\_report} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Automated Machine Learning}
+\label{sec:automl-bg}
+
+AutoML systems automate one or more of the decisions in
+Table~\ref{tab:ml-stages}. Formally, an AutoML problem can be phrased
+as the joint optimisation of a pipeline $p\in\mathcal{P}$ from a
+composite space of preprocessors, estimators and hyperparameters
+\citep{feurer2015autosklearn}:
+\begin{equation}
+  p^{\ast} \;=\; \arg\min_{p\in\mathcal{P}}\;
+  \operatorname{CV}\big(\ell,\, p,\, \mathcal{D}_{\text{train}}\big),
+  \label{eq:automl-cv}
+\end{equation}
+where $\operatorname{CV}(\cdot)$ denotes $k$-fold cross-validated risk.
+\projname{} implements a small but principled version of
+\eqref{eq:automl-cv}: it evaluates four candidate estimators with
+$k$-fold cross-validation and selects the one with the best primary
+metric.
+
+\section{Data Preprocessing and Feature Engineering}
+\label{sec:preproc-bg}
+
+The dominant preprocessing recipe for tabular data
+\citep{hastie2009elements, kuhn2019featureengineering} combines
+imputation and encoding into a single \code{ColumnTransformer}
+\citep{sklearn2011}:
+\begin{itemize}[leftmargin=1.3em]
+  \item Numerical columns: median imputation, then $z$-score
+        standardisation
+        $z_j = (x_j - \mu_j)/\sigma_j$.
+  \item Categorical columns: most-frequent imputation, then one-hot
+        encoding.
+\end{itemize}
+\projname{} builds exactly this preprocessor in
+\file{mcp\_servers/modeling.py} via the \code{\_build\_preprocessor}
+function; the same pipeline is embedded into exported Jupyter
+notebooks so that a user can re-run it offline.
+
+\section{Exploratory Data Analysis}
+\label{sec:eda-bg}
+
+The core of EDA \citep{tukey1977eda} is to summarise, visualise, and
+develop intuition for a dataset before modelling. The platform's
+\tool{run\_full\_eda} tool produces:
+
+\begin{itemize}[leftmargin=1.3em]
+  \item Per-column descriptive statistics for numerical features:
+        count, mean, standard deviation, minimum, quartiles, maximum,
+        IQR, skewness, and IQR-based outlier count.
+  \item Per-column frequency summaries for categorical features:
+        count, unique values, top-$k$ frequencies.
+  \item Missing-value summaries with per-column counts and
+        percentages.
+  \item Three plots rendered directly with matplotlib
+        \citep{hunter2007matplotlib}: a correlation heatmap, a small
+        multiple of histograms, and a bar chart of missing values.
+\end{itemize}
+
+Correlation coefficients are computed with the three canonical methods
+--- Pearson $\rho$, Spearman $\rho_s$, and Kendall $\tau$ ---
+depending on the user's request. For two random variables $X$ and $Y$
+with means $\mu_X$, $\mu_Y$ and standard deviations $\sigma_X$,
+$\sigma_Y$,
+\begin{equation}
+  \rho(X, Y) \;=\;
+  \frac{\mathbb{E}[(X-\mu_X)(Y-\mu_Y)]}{\sigma_X \sigma_Y}.
+  \label{eq:pearson}
+\end{equation}
+
+\section{Model Selection and Hyperparameter Optimisation}
+\label{sec:hpo-bg}
+
+The candidate models in the \projname{} bake-off are those that have
+historically dominated tabular benchmarks
+\citep{grinsztajn2022trees, borisov2022deep}: random forests
+\citep{breiman2001rf}, gradient-boosted trees (XGBoost
+\citep{chen2016xgboost}, LightGBM \citep{ke2017lightgbm}), and simple
+linear baselines (logistic regression, ridge regression). Each model
+is embedded into an sklearn \code{Pipeline} together with the
+preprocessor of Section~\ref{sec:preproc-bg} and evaluated with
+$k$-fold cross-validation. The primary metric is F1-weighted for
+classification and $R^2$ for regression.
+
+The hyperparameter sweep uses Optuna \citep{akiba2019optuna} with the
+Tree-structured Parzen Estimator (TPE) sampler
+\citep{bergstra2011algorithms}. TPE models
+$p(\lambda \mid \text{score} < \gamma)$ and
+$p(\lambda \mid \text{score} \ge \gamma)$ and proposes the point that
+maximises the ratio $\ell(\lambda) / g(\lambda)$. \projname{} bounds
+the search by wall-clock time, exposing a \code{time\_budget\_seconds}
+argument.
+
+\section{Model Evaluation}
+\label{sec:eval-bg}
+
+Classification is evaluated with accuracy and the F1 score,
+\begin{equation}
+  F_1 \;=\; \frac{2\cdot P \cdot R}{P + R},
+  \qquad
+  P = \frac{\text{TP}}{\text{TP}+\text{FP}},
+  \qquad
+  R = \frac{\text{TP}}{\text{TP}+\text{FN}},
+  \label{eq:f1}
+\end{equation}
+using the ``weighted'' averaging strategy (per-class F1 weighted by
+support) for the multi-class case and ``binary'' otherwise. Regression
+uses the root mean squared error (RMSE) and the coefficient of
+determination $R^2$,
+\begin{equation}
+  \text{RMSE} = \sqrt{\frac{1}{n}\sum_{i=1}^{n}(y_i-\hat{y}_i)^2},
+  \qquad
+  R^2 = 1 - \frac{\sum(y_i-\hat{y}_i)^2}{\sum(y_i-\bar y)^2}.
+  \label{eq:rmse-r2}
+\end{equation}
+
+\section{Model Explainability}
+\label{sec:xai-bg}
+
+The Shapley value assigns to each feature $j$ its expected marginal
+contribution to the model output across all coalitions
+$S\subseteq\{1,\ldots,d\}\setminus\{j\}$:
+\begin{equation}
+  \phi_j \;=\;
+  \sum_{S\subseteq\{1,\ldots,d\}\setminus\{j\}}
+  \frac{|S|!\,(d-|S|-1)!}{d!}
+  \big[f(S\cup\{j\}) - f(S)\big].
+  \label{eq:shap}
+\end{equation}
+SHAP \citep{lundberg2017shap} approximates
+\eqref{eq:shap} efficiently for tree ensembles (\code{TreeExplainer}
+\citep{lundberg2020treeshap}) and generic models
+(\code{KernelExplainer}). \projname{} calls \code{TreeExplainer} for
+Random Forest, XGBoost, LightGBM, and Gradient Boosting models and
+falls back to \code{KernelExplainer} otherwise.
+
+\section{Reproducibility and MLOps Basics}
+\label{sec:mlops-bg}
+
+Reproducibility \citep{pineau2021reproducibility} rests on three
+pillars: deterministic code, versioned data, and preserved artefacts.
+\projname{} addresses the first with fixed \code{random\_state}
+arguments plumbed through every tool; the second is the user's
+responsibility (raw uploads are preserved verbatim under
+\file{data/uploads}); the third is provided by an artefact registry
+that assigns each generated file a UUID, a kind, and a metadata
+dictionary, and appends it to \file{data/artifacts/\_index.json}.
+
+\section{Large Language Models and Tool Use}
+\label{sec:tools-bg}
+
+Modern instruction-tuned LLMs \citep{openai2023gpt4, llama3card,
+touvron2023llama} can be prompted with a list of \emph{tool schemas}
+--- JSON descriptions of functions the model may call --- and will
+emit structured \code{tool\_call} messages when they judge that
+external computation is required
+\citep{openai2023function, schick2023toolformer}. This turns the LLM
+from a text-completion engine into a \emph{planner} that composes
+external primitives to satisfy a user goal
+\citep{yao2023react, patil2023gorilla}.
+
+\projname{} follows the OpenAI-compatible tool-calling convention as
+implemented by the Groq Chat Completions API. The orchestrator
+translates the MCP tool catalog into that schema at start-up and
+routes each \code{tool\_call} back through the MCP client pool.
+
+\section{The Model Context Protocol}
+\label{sec:mcp-bg}
+
+The Model Context Protocol (MCP) \citep{mcpSpec2024, anthropic2024mcp}
+is a JSON-RPC-based protocol that standardises how an LLM host
+discovers and invokes external capabilities. A conformant server
+exposes three kinds of primitives:
+
+\begin{enumerate}[leftmargin=1.4em]
+  \item \textbf{Tools} --- typed functions the host may call. Each
+        tool has an \code{inputSchema} (JSON Schema) and a natural
+        language description.
+  \item \textbf{Resources} --- addressable read-only content
+        referenced by URI templates.
+  \item \textbf{Prompts} --- parameterised prompt templates that the
+        host can invoke to shape a user turn.
+\end{enumerate}
+
+FastMCP \citep{fastmcp} is a Python implementation of MCP that
+generates the required JSON schemas from Python type hints and
+docstrings. \projname{} uses FastMCP to define five servers and
+communicates with them via the special \code{FastMCPTransport} that
+runs the client--server exchange as in-process asynchronous method
+calls --- no HTTP, no ports, and no serialisation cost beyond what
+the protocol itself requires.
+
+Table~\ref{tab:mcp-primitives} summarises the primitives used by
+\projname.
+
+\begin{table}[H]
+\centering
+\caption{MCP primitives used by \projname.}
+\label{tab:mcp-primitives}
+\begin{tabularx}{\linewidth}{@{}llXr@{}}
+\toprule
+\textbf{Primitive} & \textbf{Where} & \textbf{Purpose} & \textbf{Count} \\
+\midrule
+Tools & All five servers & LLM-callable functions & 11 \\
+Prompts & \svc{mcp-eda} & Multi-step template (\tool{eda\_deep\_dive}) & 1 \\
+Resources & --- & (Not currently exposed; see Ch.~\ref{ch:conclusion}) & 0 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Streamlit}
+\label{sec:streamlit-bg}
+
+Streamlit \citep{streamlit} is a Python library for building
+interactive data applications with a re-run-on-input execution model.
+Its widgets and state management are well matched to a
+research-oriented UI that is developed and maintained by a small team.
+\projname{} uses Streamlit only as an interactive shell over the
+orchestrator; the UI contains no ML logic and can be swapped for a
+CLI, a Jupyter widget layer, or a web front-end without touching
+\file{core/}, \file{mcp\_servers/}, or \file{orchestrator/}.

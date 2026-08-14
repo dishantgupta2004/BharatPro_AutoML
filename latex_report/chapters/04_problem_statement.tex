@@ -1,0 +1,167 @@
+\chapter{Problem Statement}
+\label{ch:problem}
+
+\section{The Existing Workflow and its Pain Points}
+\label{sec:existing-workflow}
+
+Consider a typical academic scenario in which a student receives a
+tabular dataset (e.g.\ a Kaggle CSV, a lab measurement export, or a
+survey response file) with the instruction ``build a predictive model
+and analyse it''. The student's usual workflow involves:
+
+\begin{enumerate}[leftmargin=1.4em]
+  \item Opening a fresh Jupyter notebook.
+  \item Importing pandas, scikit-learn, seaborn or matplotlib, and
+        possibly XGBoost / LightGBM.
+  \item Manually computing \code{df.describe()}, \code{df.isna()},
+        \code{df.corr()} and plotting a handful of charts.
+  \item Splitting the data with \code{train\_test\_split}, choosing a
+        model almost arbitrarily, fitting it, and reporting one or two
+        metrics.
+  \item Rarely: computing feature importances or SHAP values.
+  \item Almost never: producing a self-contained, executable notebook
+        or PDF report that can be graded, reviewed, or reproduced.
+\end{enumerate}
+
+The failure modes are well documented in the literature
+\citep{pineau2021reproducibility, kapoor2022leakage} and observed
+first-hand in classroom settings: incorrect train/test splits, target
+leakage, inappropriate metrics, hidden preprocessing, unstated random
+seeds, and missing environment specifications. These failures are
+rarely due to bad intent; they arise from cognitive load and from the
+absence of an opinionated, guided workflow.
+
+\section{Target Users}
+\label{sec:target-users}
+
+\projname{} is designed for three overlapping audiences:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{Students} (undergraduate and postgraduate) doing
+        coursework or capstone projects with tabular data.
+  \item \textbf{Applied researchers} (in economics, biology, social
+        sciences, engineering) who need a quick baseline before
+        committing to a bespoke model.
+  \item \textbf{Data engineers} exploring MCP as a mechanism for
+        exposing internal data products to LLM agents.
+\end{itemize}
+
+The platform is explicitly \emph{not} designed for large-scale
+production use, for competitive Kaggle-style benchmarking, or for
+non-tabular data.
+
+\section{Problem Statement}
+\label{sec:formal-problem}
+
+We can now state the problem this project addresses:
+
+\begin{quote}
+\emph{Design and implement a local, single-user, extensible platform
+that lets a non-expert user upload a tabular dataset, ask
+natural-language questions and issue natural-language commands, and
+receive back --- with an audit trail of tool calls, arguments, and
+intermediate results --- a full set of exploratory analyses, a
+comparative model leaderboard, an explainability card, a reproducible
+Jupyter notebook, and a PDF report, all persisted on the local
+filesystem.}
+\end{quote}
+
+Concretely, the platform must satisfy the following relationships:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item Given a natural-language request $q$ and an active dataset
+        $D$, the platform selects a sequence of tools
+        $t_1,\ldots,t_k$ from a fixed catalog and produces a response
+        $r(q,D) = \Phi(t_k \circ \cdots \circ t_1)(D)$ together with
+        an audit trace $[(t_i, a_i, o_i)]$ where $a_i$ are the
+        arguments and $o_i$ the outputs.
+  \item Every artefact produced by any $t_i$ is written to the local
+        filesystem with a UUID and metadata sufficient to recover it
+        later.
+  \item The system must remain usable when the LLM is unavailable ---
+        the tool catalog can be invoked programmatically without a
+        chat turn.
+\end{itemize}
+
+\section{Design Goals}
+\label{sec:design-goals}
+
+The design of \projname{} is guided by the following goals, in order
+of priority:
+
+\begin{enumerate}[leftmargin=1.4em]
+  \item \textbf{Determinism first.} The LLM plans and formats; every
+        numerical result comes from deterministic Python code with a
+        fixed random seed.
+  \item \textbf{Auditability.} Every tool call is visible to the user
+        (arguments, result, duration, service).
+  \item \textbf{Reproducibility.} Every generated artefact is stored
+        with a stable identifier and metadata.
+  \item \textbf{Extensibility.} Adding a new tool is a
+        single-decorator change to one MCP server; nothing else needs
+        to change.
+  \item \textbf{Local-first.} No cloud storage, no authentication, no
+        network I/O except the LLM API.
+  \item \textbf{Thin UI.} The Streamlit layer contains no ML logic;
+        it is a client of the orchestrator.
+\end{enumerate}
+
+\section{Constraints}
+\label{sec:constraints}
+
+The following constraints were adopted throughout the design:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{Language.} All server-side code is in Python
+        3.11+. This aligns with the modern typing features used by
+        FastMCP.
+  \item \textbf{Runtime.} Single machine, single OS process.
+        Concurrency is exclusively via \code{asyncio} and small
+        thread pools used inside individual tools.
+  \item \textbf{Storage.} Local filesystem under \file{data/} only.
+        No database.
+  \item \textbf{LLM provider.} Groq's OpenAI-compatible Chat
+        Completions API, primarily with Llama\,3.3 70B; other
+        OpenAI-compatible providers are drop-in but untested.
+  \item \textbf{Data modality.} Tabular only. Image, text, audio,
+        and multimodal data are out of scope.
+\end{itemize}
+
+\section{Assumptions}
+\label{sec:assumptions}
+
+The design assumes that:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item The user has a working Python 3.11+ environment and can
+        install the listed dependencies with \code{pip}.
+  \item The user has a Groq API key. The system explicitly warns
+        the user when the key is missing.
+  \item The dataset fits comfortably in memory (default upload cap
+        is 200~MB, configurable).
+  \item The user is trusted --- uploaded files may execute pandas
+        parsing but not arbitrary code.
+\end{itemize}
+
+\section{Success Criteria}
+\label{sec:success}
+
+The platform is considered successful for the purposes of this project
+if, on a standard tabular dataset (e.g.\ the UCI Iris
+\citep{uciiris}, Wine \citep{uciwine}, or Adult \citep{uciadult}
+datasets), a first-time user can:
+
+\begin{enumerate}[leftmargin=1.4em]
+  \item Upload the CSV and see it appear in the sidebar.
+  \item Issue a single natural-language request such as ``run a full
+        EDA and then train a model to predict \code{<target>}''.
+  \item Observe the copilot select the correct sequence of tools,
+        display live progress, and produce (a)~an EDA report with
+        three plots, (b)~a champion model, (c)~a SHAP summary plot
+        or feature-importance chart, (d)~a Jupyter notebook that
+        reproduces the pipeline, and (e)~a PDF report that lists the
+        leaderboard.
+  \item Download each artefact from the artefacts tab.
+\end{enumerate}
+
+The remainder of the report shows how these criteria are met.

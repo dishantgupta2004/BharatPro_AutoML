@@ -1,0 +1,181 @@
+\chapter{Literature Review}
+\label{ch:litreview}
+
+This chapter surveys the academic literature relevant to \projname{}.
+It is organised by theme: (i)~AutoML systems, (ii)~hyperparameter
+optimisation and neural architecture search, (iii)~gradient-boosted
+trees on tabular data, (iv)~model explainability, (v)~LLM tool use
+and agentic systems, (vi)~the Model Context Protocol, and
+(vii)~conversational data-science interfaces. Only verifiable
+publications are cited; every reference has a corresponding entry in
+\file{bibliography/references.bib}.
+
+\section{AutoML Systems}
+\label{sec:lit-automl}
+
+Auto-WEKA \citep{thornton2013autoweka} was among the first systems to
+frame AutoML as a joint choice of algorithm and hyperparameters
+solved by Bayesian optimisation. Auto-sklearn
+\citep{feurer2015autosklearn} extended this by meta-learning warm
+starts and constructing ensembles. TPOT \citep{olson2016tpot} instead
+uses genetic programming over scikit-learn pipelines. H2O AutoML
+\citep{ledell2020h2o} is a production-oriented Java/Python system
+that combines random search over gradient-boosted trees and
+generalised linear models with stacked ensembles. AutoGluon
+\citep{erickson2020autogluon} argues that bagging and stacking of
+heterogeneous models are more effective on tabular data than
+NAS-style search. Auto-Keras \citep{jin2019autokeras} focuses on
+architecture search for deep image models.
+
+More recent contributions include CAAFE \citep{hollmann2024caafe},
+which uses an LLM to propose new features in an interpretable
+feature-engineering loop, and DS-Agent \citep{guo2024dsagents}, which
+uses case-based reasoning to plan data-science workflows. \projname{}
+inherits from this fifth-generation line but focuses on
+\emph{platform} concerns --- deployment, artefact management, and
+extensibility --- rather than novel search algorithms.
+
+\section{Hyperparameter Optimisation and NAS}
+\label{sec:lit-hpo}
+
+\citet{bergstra2012random} demonstrated that random search often
+outperforms grid search on high-dimensional configuration spaces.
+SMAC \citep{hutter2011smac} popularised sequential model-based
+optimisation with random-forest surrogates. TPE
+\citep{bergstra2011algorithms} models the density of good and bad
+configurations separately and forms the default sampler in Optuna
+\citep{akiba2019optuna}. Hyperband \citep{li2017hyperband} and BOHB
+\citep{falkner2018bohb} use multi-fidelity budgets to accelerate
+search on expensive learners. Neural architecture search
+\citep{zoph2017nas, real2019regularized, elsken2019nas} operates in
+much larger, discrete search spaces than tabular HPO and is out of
+scope for the current \projname{} implementation.
+
+\section{Gradient-Boosted Trees on Tabular Data}
+\label{sec:lit-tabular}
+
+Gradient boosting \citep{friedman2001greedy} remains the dominant
+family of methods on tabular data. XGBoost \citep{chen2016xgboost}
+introduced sparsity-aware split finding and regularisation that
+enabled scaling to millions of rows. LightGBM \citep{ke2017lightgbm}
+proposed histogram binning, gradient-based one-side sampling, and
+exclusive-feature bundling to reduce training time. CatBoost
+\citep{prokhorenkova2018catboost} handled categorical features with
+target-based encodings. \citet{grinsztajn2022trees} conducted a
+comprehensive empirical comparison and concluded that tree ensembles
+continue to outperform deep models on medium-sized tabular data;
+\citet{borisov2022deep} report similar findings. Random forests
+\citep{breiman2001rf} remain a strong, hyperparameter-tolerant
+baseline and are always included in the \projname{} bake-off.
+
+\section{Explainability}
+\label{sec:lit-xai}
+
+\citet{ribeiro2016lime} proposed LIME, a local surrogate
+explanation. \citet{lundberg2017shap} introduced SHAP as a unified
+framework that satisfies desirable game-theoretic axioms and
+\citet{lundberg2020treeshap} presented an $O(TL D^{2})$ algorithm
+for exact Shapley values on tree ensembles. \projname{} uses
+\code{TreeExplainer} for tree-based champions and falls back to
+\code{KernelExplainer} for linear and neural models. For a survey
+of interpretable ML, see \citet{molnar2022ibm}. The distinction
+between explanation and interpretation is critically discussed by
+\citet{rudin2019stop}.
+
+\section{Data Validation and MLOps}
+\label{sec:lit-mlops}
+
+Schema validation for pandas dataframes is provided by pandera
+\citep{pandera}, which allows column-level type, nullability, and
+categorical constraints. \citet{polyzotis2018dataval,
+schelter2018data} argue that data validation is a critical
+MLOps concern that is under-served by the sklearn ecosystem.
+Reproducibility guidelines for ML papers are surveyed by
+\citet{pineau2021reproducibility}. Feature stores, experiment
+trackers, and model registries have become standard concerns in
+production ML but are largely out of scope for a single-user
+research platform.
+
+\section{LLM Tool Use, Function Calling, and Agents}
+\label{sec:lit-llm-tools}
+
+Instruction-tuned language models such as GPT-3
+\citep{brown2020gpt3}, GPT-4 \citep{openai2023gpt4}, and Llama\,3
+\citep{llama3card, touvron2023llama} exhibit strong zero-shot
+capabilities that are further improved by tool use. Toolformer
+\citep{schick2023toolformer} showed that a model can be
+self-supervised to invoke external APIs. ReAct \citep{yao2023react}
+interleaves reasoning traces with tool calls to improve
+compositionality. Gorilla \citep{patil2023gorilla} explores
+retrieval-augmented tool selection over large API catalogs. OpenAI's
+function-calling API \citep{openai2023function} standardised the
+tool-call schema that is used by Groq and other OpenAI-compatible
+providers. \citet{qin2024toolllm} and \citet{shen2024hugginggpt}
+extend agentic tool use to thousands of external services.
+
+\projname{} is deliberately more conservative than these systems:
+its tool catalog is a curated set of eleven functions and its
+planner is a single LLM without a hierarchical controller or a
+memory module. This restricts the surface area for hallucination and
+keeps the platform inspectable.
+
+\section{The Model Context Protocol}
+\label{sec:lit-mcp}
+
+MCP was announced in late 2024 \citep{anthropic2024mcp} and
+formalised in an open specification \citep{mcpSpec2024}. The
+specification defines the JSON-RPC-based transport, the three
+primitive kinds (tools, resources, prompts), the discovery lifecycle,
+and the sampling protocol. FastMCP \citep{fastmcp} is a
+community-maintained Python implementation that produces MCP
+schemas from decorated Python functions.
+
+Academic study of MCP is still nascent at the time of writing, but
+the protocol is closely related to earlier work on tool exchange
+formats \citep{schick2023toolformer, patil2023gorilla} and to the
+OpenAI function-calling schema \citep{openai2023function}. The
+particular contribution of MCP is that it decouples the
+tool-provider from the LLM host --- a property that matches the
+service-oriented architecture used by \projname.
+
+\section{Conversational Interfaces for Data Science}
+\label{sec:lit-convo}
+
+The idea of a chat-first interface to data analysis predates modern
+LLMs; work such as Datatone \citep{gao2015datatone} and
+\citet{narechania2020nl4dv} used semantic parsing to translate
+natural-language questions into Vega-Lite specifications
+\citep{satyanarayan2016vega}. LIDA \citep{dibia2023lida} and Chat2Vis
+\citep{maddigan2023chat2vis} use LLMs to synthesise visualisation
+code. LLM-based ``code interpreter'' environments (as popularised by
+ChatGPT) let the model both generate and execute code in a sandbox
+but do not expose a typed tool catalog to a third-party developer.
+\projname{} differs from these systems by exposing an
+\emph{explicit, extensible, and well-typed} catalog that is versioned
+inside the repository rather than embedded in a proprietary sandbox.
+
+\section{Positioning of \projname}
+\label{sec:lit-position}
+
+Combining the above threads, \projname{} occupies the following
+position in the design space:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item Like Auto-sklearn \citep{feurer2015autosklearn} and AutoGluon
+        \citep{erickson2020autogluon}, it uses cross-validated model
+        selection with the standard tabular estimator family.
+  \item Like Optuna \citep{akiba2019optuna}, it exposes budget-bounded
+        TPE search.
+  \item Like SHAP \citep{lundberg2017shap}, it provides model-agnostic
+        explanations of the champion model.
+  \item Unlike Auto-sklearn or AutoGluon, its \emph{interface} is a
+        conversation and its \emph{orchestrator} is an LLM that
+        selects and composes tools.
+  \item Unlike code-interpreter systems, its tool catalog is a
+        versioned, typed set of MCP tools that can be inspected,
+        replaced, and extended without touching the front-end.
+  \item Unlike commercial AutoML SaaS, all storage is on the local
+        filesystem and no authentication or account is required.
+\end{itemize}
+
+The remainder of the report elaborates on this design.

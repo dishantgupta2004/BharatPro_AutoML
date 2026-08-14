@@ -1,0 +1,78 @@
+\chapter{Reproducibility Notes}
+\label{app:repro}
+
+This appendix collects the information required to reproduce any run
+of the platform.
+
+\section{Environment Snapshot}
+\label{sec:env-snapshot}
+
+The recommended way to snapshot the environment is:
+
+\begin{lstlisting}[style=alBash, numbers=none]
+python -V > env.txt
+pip freeze >> env.txt
+\end{lstlisting}
+
+Store \file{env.txt} alongside the artefacts of the run.
+
+\section{Full Install Sequence}
+\label{sec:install}
+
+\begin{lstlisting}[style=alBash, numbers=none]
+git clone <repo-url>
+cd automl-mcp-platform
+python -m venv .venv
+
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+# macOS / Linux
+source .venv/bin/activate
+
+pip install -r requirements.txt
+cp .env.example .env
+# Edit .env to set GROQ_API_KEY
+
+streamlit run app/streamlit_app.py
+\end{lstlisting}
+
+\section{Ports and Endpoints}
+\label{sec:ports}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item Streamlit default: \code{http://localhost:8501}. Override with
+        \code{streamlit run app/streamlit\_app.py --server.port 8600}.
+  \item Groq: \code{https://api.groq.com} outbound only.
+  \item No inbound ports opened by the MCP layer (in-process
+        transport).
+\end{itemize}
+
+\section{Data Cleanup}
+\label{sec:cleanup}
+
+To reset the platform to a clean state:
+
+\begin{lstlisting}[style=alBash, numbers=none]
+rm -rf data/uploads/* data/artifacts/* data/tmp/*
+touch data/uploads/.gitkeep data/artifacts/.gitkeep data/tmp/.gitkeep
+\end{lstlisting}
+
+The \file{.gitkeep} files preserve the directories in Git.
+
+\section{Random Seed Discipline}
+\label{sec:seed}
+
+Every tool that involves randomness accepts a
+\code{random\_state} argument with default \code{42}. To make a
+particular run deterministic under this convention:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item Pass the same \code{random\_state} to
+        \tool{run\_parallel\_bake\_off} and
+        \tool{trigger\_hyperparameter\_sweep}.
+  \item Note that \code{n\_jobs=-1} inside individual estimators
+        introduces some threading-related non-determinism; for
+        strict reproducibility, use \code{n\_jobs=1}.
+  \item The LLM output is inherently non-deterministic and is not
+        seeded.
+\end{itemize}

@@ -1,0 +1,258 @@
+\chapter{The AutoML Pipeline}
+\label{ch:pipeline}
+
+Chapter~\ref{ch:arch} explained \emph{how} components communicate;
+this chapter explains \emph{what} the platform actually does with a
+dataset. The pipeline is written as if the LLM issues each tool call
+manually, because in practice the LLM composes them in exactly this
+order.
+
+\section{Pipeline Overview}
+\label{sec:pipeline-overview}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=0.5cm and 0.5cm, font=\small\sffamily]
+  \node[al-node, minimum width=2.6cm]                              (raw){Raw CSV / \\ TSV / Parquet};
+  \node[al-node, right=of raw, minimum width=2.6cm]                (ing){ingest \\ \& profile};
+  \node[al-node, right=of ing, minimum width=2.6cm]                (val){pandera \\ validation};
+  \node[al-node, right=of val, minimum width=2.6cm]                (eda){full EDA \\ + plots};
+  \node[al-node, below=1cm of eda, minimum width=2.6cm]            (bak){parallel \\ bake-off};
+  \node[al-node, left=of bak, minimum width=2.6cm]                 (hpo){Optuna \\ sweep (opt.)};
+  \node[al-node, left=of hpo, minimum width=2.6cm]                 (shap){SHAP or \\ feature imp.};
+  \node[al-node, left=of shap, minimum width=2.6cm]                (exp){notebook \\ + PDF};
+
+  \draw[al-flow] (raw)--(ing);
+  \draw[al-flow] (ing)--(val);
+  \draw[al-flow] (val)--(eda);
+  \draw[al-flow] (eda.south) |- (bak.east);
+  \draw[al-flow] (bak)--(hpo);
+  \draw[al-flow] (hpo)--(shap);
+  \draw[al-flow] (shap)--(exp);
+\end{tikzpicture}
+\caption{End-to-end tabular AutoML pipeline realised by \projname.}
+\label{fig:pipeline}
+\end{figure}
+
+Each box maps to one or two MCP tools; the arrows are optional to the
+extent that the LLM may skip stages (e.g.\ if the user only asks for
+EDA). \impl{} labels apply to every stage --- there is no ``proposed
+but unimplemented'' step in Figure~\ref{fig:pipeline}.
+
+\section{Stage 1: Ingestion}
+\label{sec:stage-ingest}
+
+The user uploads a file via the Streamlit sidebar; bytes are handed
+to \code{workspace.save\_uploaded\_dataset}, which writes to
+\file{data/uploads/<safe\_name>}.
+
+The LLM then invokes \tool{ingest\_dataset(file\_path)}. The tool
+delegates to \code{workspace.resolve\_dataset} to obtain the local
+path, reads the file with \code{pandas.read\_csv}
+(or \code{read\_parquet} / \code{read\_json}), and returns:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item File name, format, and shape.
+  \item Memory footprint in KB.
+  \item Column names and dtypes.
+  \item Head preview (default 5 rows).
+  \item Total missing count and duplicate-row count.
+\end{itemize}
+
+This response is small enough to fit comfortably in the LLM context
+and gives the model everything it needs to reason about subsequent
+questions --- ``does the target column exist?'', ``is this
+classification or regression?'', ``what fraction is missing?''.
+
+\section{Stage 2: Schema Validation}
+\label{sec:stage-validate}
+
+\tool{validate\_schema\_with\_pandera(file\_path, expected\_columns,
+strict\_dtypes)} infers a pandera schema and validates the frame
+against it in lazy mode. Rules are constructed per column as follows:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item Numeric columns receive
+        \code{pa.Check.in\_range(min, max)}.
+  \item Low-cardinality string columns ($\le 20$ uniques) receive
+        \code{pa.Check.isin(allowed\_categories)}.
+  \item Nullability follows from observed missing values.
+\end{itemize}
+
+The tool returns the inferred rules, whether validation succeeded,
+and up to 50 failure cases. This is used by the LLM to warn the user
+about outliers, unexpected string values, or off-range numeric
+readings before any modelling is done.
+
+\section{Stage 3: Exploratory Data Analysis}
+\label{sec:stage-eda}
+
+\tool{run\_full\_eda(file\_path, target\_column)} produces:
+
+\begin{enumerate}[leftmargin=1.4em]
+  \item Descriptive statistics per numeric column: mean, std, min,
+        Q25, median, Q75, max, IQR, skewness, IQR-outlier count.
+  \item Descriptive statistics per categorical column: unique count,
+        top value, top frequency, top-5 values.
+  \item Missing-value summary per column and overall.
+  \item Three matplotlib plots saved as PNG artefacts:
+        \begin{itemize}[leftmargin=1.2em]
+          \item Correlation matrix (\emph{if} $\ge 2$ numeric cols).
+          \item Small multiple of histograms for the first
+                12 numeric columns.
+          \item Bar chart of missing percentages (\emph{if} any
+                missing values exist).
+        \end{itemize}
+  \item Optional target analysis if the user supplied a
+        \code{target\_column}.
+\end{enumerate}
+
+\tool{render\_correlation\_matrix} produces a standalone correlation
+heatmap with Pearson, Spearman, or Kendall as requested, and reports
+the top pairs with $|\rho| \ge 0.6$.
+
+\section{Stage 4: Model Selection --- The Bake-Off}
+\label{sec:stage-bakeoff}
+
+The bake-off is the analytical heart of the platform.
+\tool{run\_parallel\_bake\_off(file\_path, target\_column, test\_size,
+cv, random\_state)} performs the following procedure.
+
+\begin{algorithm}[H]
+\caption{Parallel bake-off (\code{mcp\_servers/modeling.py}).}
+\label{alg:bakeoff}
+\begin{algorithmic}[1]
+\Require dataset $\mathcal{D}$, target $t$, test size $s$, folds $k$, seed $\sigma$
+\State drop rows with NaN in $t$; abort if $t \notin \mathcal{D}$
+\State $y \gets \mathcal{D}[t]$; if $y$ non-numeric $\Rightarrow$ label-encode
+\State detect problem type from $y$ (classification if $|\text{unique}| \le \max(20, 0.05n)$ or non-numeric; else regression)
+\State build \code{ColumnTransformer}: median-impute+scale numerics, most-frequent+one-hot categoricals
+\State stratified split $(X_{tr}, X_{te}, y_{tr}, y_{te})$
+\State $\mathcal{M} \gets \{\text{RandomForest}, \text{XGBoost}, \text{LightGBM}, \text{baseline}\}$ (LR or Ridge)
+\ForAll{$m \in \mathcal{M}$ in parallel (thread pool, max 4)}
+  \State $\text{cv}_m \gets \operatorname{cross\_val\_score}(\text{Pipe}(pre, m), X_{tr}, y_{tr}, cv=k, \text{scoring}=\text{primary})$
+  \State refit on $(X_{tr}, y_{tr})$; predict on $X_{te}$
+  \State compute accuracy \& $F_1$ (classification) or RMSE \& $R^2$ (regression); record train time
+\EndFor
+\State sort leaderboard by primary metric descending; abort if all failed
+\State $\text{champion} \gets \arg\max$
+\State persist champion pipeline (joblib) and $X_{tr}[0{:}500]$ sample (parquet) as artefacts
+\State \Return leaderboard, champion, model\_id, x\_train\_sample\_id
+\end{algorithmic}
+\end{algorithm}
+
+The primary metric is F1-weighted for classification and $R^2$ for
+regression. The choice of a small candidate set (four models) is
+deliberate: it favours interpretability and short training times
+over exhaustive search, which is appropriate for the ``upload a CSV
+and get a baseline'' use case.
+
+\section{Stage 5: Hyperparameter Optimisation (Optional)}
+\label{sec:stage-hpo}
+
+\tool{trigger\_hyperparameter\_sweep(file\_path, target\_column,
+model\_family, time\_budget\_seconds, cv, random\_state)} performs a
+TPE-based Optuna study on one of RandomForest, XGBoost, or LightGBM.
+The search space is defined inside the objective function
+(``define-by-run''):
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{RandomForest:} \code{n\_estimators} $\in [100, 600]$,
+        \code{max\_depth} $\in [3, 30]$, \code{min\_samples\_split}
+        $\in [2, 20]$.
+  \item \textbf{XGBoost:} \code{n\_estimators} $\in [100, 600]$,
+        \code{max\_depth} $\in [3, 12]$, \code{learning\_rate}
+        $\in [10^{-2}, 3\!\cdot\!10^{-1}]$ (log-uniform),
+        \code{subsample} and \code{colsample\_bytree} $\in [0.6, 1.0]$.
+  \item \textbf{LightGBM:} \code{n\_estimators} $\in [100, 600]$,
+        \code{num\_leaves} $\in [15, 127]$, \code{learning\_rate}
+        $\in [10^{-2}, 3\!\cdot\!10^{-1}]$ (log-uniform),
+        \code{feature\_fraction} $\in [0.6, 1.0]$.
+\end{itemize}
+
+The study is bounded by wall-clock time; progress is streamed at
+2-second intervals with the best value observed so far.
+
+\section{Stage 6: Explainability}
+\label{sec:stage-explain}
+
+The champion model is loaded by ID via
+\code{workspace.artifact\_path}. \tool{calculate\_shap\_values}
+picks an explainer based on the class name of the underlying
+estimator:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item Tree-family (\code{Forest}, \code{XGB}, \code{LGBM},
+        \code{GradientBoosting}) $\rightarrow$ \code{TreeExplainer}
+        \citep{lundberg2020treeshap}.
+  \item Otherwise $\rightarrow$ \code{KernelExplainer} against a
+        100-sample background.
+\end{itemize}
+
+The tool renders \code{shap.summary\_plot} and stores it as a plot
+artefact, and returns a top-20 mean-absolute-SHAP ranking.
+
+\tool{generate\_feature\_importance\_plot} is a lighter alternative
+that uses the estimator's native \code{feature\_importances\_}
+attribute (available on tree-based models) and produces a horizontal
+bar chart of the top-$k$ features.
+
+\section{Stage 7: Export --- Reproducible Notebook and PDF}
+\label{sec:stage-export}
+
+\tool{generate\_jupyter\_notebook} builds a notebook dictionary in
+memory following the nbformat 4 schema. The generated cells cover:
+
+\begin{enumerate}[leftmargin=1.4em]
+  \item Header with project metadata.
+  \item Imports (adjusted to the champion family).
+  \item Data load.
+  \item Train/test split.
+  \item Preprocessing pipeline construction.
+  \item Champion model fit.
+  \item Evaluation with the appropriate metrics.
+  \item \code{joblib.dump} of the champion.
+\end{enumerate}
+
+The notebook is written to disk with \code{json.dumps} and persisted
+as a \code{training\_notebook} artefact. A user can download it,
+run it in Jupyter, and reproduce the pipeline offline.
+
+\tool{compile\_pdf\_report} uses ReportLab \citep{reportlab} to
+produce a Letter-format PDF containing a title block, dataset and
+target metadata, the leaderboard table, and optional notes.
+
+\section{Putting the Pipeline Together}
+\label{sec:pipeline-full}
+
+A typical single-turn request from a user
+--- ``run a full EDA on my data, train a model to predict
+\code{<target>}, explain it, and generate a notebook and PDF'' ---
+results in the tool sequence shown in
+Table~\ref{tab:tool-sequence}.
+
+\begin{table}[H]
+\centering
+\caption{Typical tool sequence issued by the LLM in response to a
+compound request.}
+\label{tab:tool-sequence}
+\begin{tabular}{@{}rll@{}}
+\toprule
+\# & \textbf{Tool} & \textbf{Purpose} \\
+\midrule
+1 & \tool{list\_uploaded\_files}         & Confirm active dataset exists \\
+2 & \tool{ingest\_dataset}               & Shape/dtypes preview \\
+3 & \tool{run\_full\_eda}                & Statistics + 3 plots \\
+4 & \tool{render\_correlation\_matrix}   & Additional heatmap \\
+5 & \tool{run\_parallel\_bake\_off}      & Champion + leaderboard \\
+6 & \tool{calculate\_shap\_values}       & Global feature importances \\
+7 & \tool{generate\_jupyter\_notebook}   & Reproducible notebook \\
+8 & \tool{compile\_pdf\_report}          & PDF summary \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+This sequence has been observed in the actual application during
+smoke-testing of the migrated codebase; the corresponding server logs
+were retained during development to confirm each artefact was
+generated.
